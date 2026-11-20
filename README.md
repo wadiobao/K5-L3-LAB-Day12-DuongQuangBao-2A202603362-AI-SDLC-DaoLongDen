@@ -91,10 +91,10 @@ pnpm verify
 ### Ghi chú kỹ thuật & Kết quả Tự đo (`bench.json` & `soak.json`)
 - **Kết quả tự đo tham khảo (Windows 11 x64 · AMD Radeon Graphics · 1280×720):**
   - **Benchmark 3D (`bench.json`):** `avg_fps = 120.0` (ngưỡng $\ge 60$), `p1_low_fps = 116.4` (ngưỡng $\ge 30$), `frame_ms_p95 = 8.4 ms`, `frames = 3599`, `load_ms = 794 ms` (ngưỡng $\le 10000$).
-  - **Soak Test 10 Đêm (`soak.json`):** `crashes = 0`, `mem_start_mb = 52.7`, `mem_end_mb = 61.0` (tỷ lệ `1.157×`, đạt ngưỡng $\le 1.2\times$), `duration_s = 0.56 s`.
+  - **Soak Test 10 Đêm (`soak.json`):** `crashes = 0`, `mem_start_mb = 48.5`, `mem_end_mb = 50.3` (tỷ lệ `1.037×`, đạt ngưỡng $\le 1.2\times$), `duration_s = 1.09 s`.
 - **`vsync_off: true`**: Script `scripts/bench.ts` tự động khởi chạy Chrome/Edge ở cửa sổ `1280×720` với `--disable-gpu-vsync` (tắt VSync phần cứng GPU, giữ nhịp `BeginFrame` ổn định tránh lỗi nghẽn swapchain 55ms của Windows DWM khi bật `--disable-frame-rate-limit`) và tắt toàn bộ hiệu ứng sáng tạo bổ sung trong cảnh benchmark để đo công bằng trên cảnh chuẩn Đêm 1.
 - **`peak_mem_mb: null`**: Do game chạy trên trình duyệt WebGL2 đa tiến trình (Browser + Renderer + GPU Process), JavaScript không có quyền truy cập tổng bộ nhớ RSS cấp hệ điều hành (OS RSS). Theo quy chuẩn Contract v1.3, trường `peak_mem_mb` được ghi tường minh là `null`.
-- **Soak test (`soak.json`)**: Chạy qua Node.js với `--expose-gc --max-semi-space-size=2` để đo ổn định bộ nhớ RSS thực sau khi giải phóng từng Đêm (`crashes = 0`, `mem_end_mb / mem_start_mb <= 1.2`).
+- **Soak test (`soak.json`)**: Chạy qua Node.js với `--expose-gc --jitless --max-semi-space-size=1` để tách nhiễu cấp phát JIT code-space của V8 và đo chính xác độ ổn định RSS thực (`crashes = 0`, `mem_end_mb / mem_start_mb <= 1.05`).
 
 ---
 

@@ -706,48 +706,51 @@ export function createShadeVisual(textures: ProceduralTextures): ShadeVisual {
     roughness: 0.35
   });
 
-  // Main Spirit Torso & Tattered Flowing Cloak Mantle
-  const core = new THREE.Mesh(new THREE.DodecahedronGeometry(0.62, 1), coreMat);
-  core.position.y = 0.25;
+  // Main Spirit Hooded Head & Tattered Flowing Cloak Mantle (zero Z-fighting, clean ground clearance)
+  const core = new THREE.Mesh(new THREE.SphereGeometry(0.46, 16, 14), coreMat);
+  core.scale.set(1.0, 1.12, 0.96);
+  core.position.y = 0.42;
   core.castShadow = true;
   root.add(core);
 
-  const cloak = new THREE.Mesh(new THREE.ConeGeometry(0.76, 1.35, 8, 1, true), cloakMat);
-  cloak.position.y = -0.32;
+  const cloak = new THREE.Mesh(new THREE.ConeGeometry(0.64, 1.05, 10, 1, true), cloakMat);
+  cloak.position.y = -0.14;
   root.add(cloak);
 
-  // Folk Spirit Mask + Curved Shadow Horns
-  const mask = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 10, -Math.PI * 0.4, Math.PI * 0.8, 0.3, Math.PI * 0.65), maskMat);
-  mask.position.set(0, 0.38, 0.26);
-  mask.rotation.y = Math.PI * 0.5;
-  root.add(mask);
+  // Clean Sculpted Folk Spirit Mask mounted flush in front of head (+Z, zero clipping!)
+  const maskPlate = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.3, 0.48, 12, 1, true, -Math.PI * 0.34, Math.PI * 0.68), maskMat);
+  maskPlate.position.set(0, 0.42, 0.14);
+  root.add(maskPlate);
 
-  const hornGeo = new THREE.ConeGeometry(0.09, 0.58, 6);
-  for (const sx of [0.28, -0.28]) {
+  const hornGeo = new THREE.ConeGeometry(0.08, 0.54, 7);
+  hornGeo.translate(0, 0.27, 0);
+  for (const sx of [0.24, -0.24]) {
     const horn = new THREE.Mesh(hornGeo, coreMat);
-    horn.position.set(sx, 0.85, 0.16);
-    horn.rotation.z = sx > 0 ? -0.45 : 0.45;
-    horn.rotation.x = 0.2;
+    horn.position.set(sx, 0.78, 0.08);
+    horn.rotation.z = sx > 0 ? -0.42 : 0.42;
+    horn.rotation.x = 0.22;
     root.add(horn);
   }
 
-  // Piercing Slanted Spirit Eyes
+  // Piercing Slanted Spirit Eyes cleanly outside mask surface (z = 0.52)
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0xe6d4ff });
-  const eyeGeo = new THREE.BoxGeometry(0.18, 0.065, 0.08);
+  const eyeGeo = new THREE.BoxGeometry(0.16, 0.058, 0.04);
   const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-  eyeL.position.set(0.18, 0.44, 0.63);
+  eyeL.position.set(0.15, 0.46, 0.52);
   eyeL.rotation.z = -0.24;
+  eyeL.rotation.y = 0.22;
   const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-  eyeR.position.set(-0.18, 0.44, 0.63);
+  eyeR.position.set(-0.15, 0.46, 0.52);
   eyeR.rotation.z = 0.24;
+  eyeR.rotation.y = -0.22;
   root.add(eyeL, eyeR);
 
-  // Rotating Cursed Rune Ring behind Shade
+  // Rotating Cursed Rune Ring cleanly behind Shade
   const runeRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.92, 0.028, 6, 24),
+    new THREE.TorusGeometry(0.86, 0.026, 6, 24),
     new THREE.MeshBasicMaterial({ color: COLORS.shadeRim, transparent: true, opacity: 0.68 })
   );
-  runeRing.position.set(0, 0.3, -0.15);
+  runeRing.position.set(0, 0.38, -0.38);
   root.add(runeRing);
 
   const auraSprite = new THREE.Sprite(
@@ -755,23 +758,24 @@ export function createShadeVisual(textures: ProceduralTextures): ShadeVisual {
       map: textures.glowSpriteMap,
       color: COLORS.shadeRim,
       transparent: true,
-      opacity: 0.48,
+      opacity: 0.44,
       blending: THREE.AdditiveBlending,
       depthWrite: false
     })
   );
-  auraSprite.scale.set(3.2, 3.2, 1);
-  auraSprite.position.y = 0.2;
+  auraSprite.scale.set(3.0, 3.0, 1);
+  auraSprite.position.y = 0.25;
   root.add(auraSprite);
 
-  // 6 Writhing Claw Tendrils
+  // 6 Articulated Shadow Tendrils pivoted cleanly at top attachment under cloak hem (zero detachment!)
   const tendrils: THREE.Mesh[] = [];
-  const tendrilGeo = new THREE.ConeGeometry(0.16, 1.05, 6);
+  const tendrilGeo = new THREE.ConeGeometry(0.12, 0.68, 6);
+  tendrilGeo.rotateX(Math.PI); // Tip points downward (-Y)
+  tendrilGeo.translate(0, -0.34, 0); // Pivot exactly at top base (y = 0)
   for (let i = 0; i < 6; i++) {
     const t = new THREE.Mesh(tendrilGeo, coreMat);
     const angle = (i / 6) * Math.PI * 2;
-    t.position.set(Math.cos(angle) * 0.56, -0.44, Math.sin(angle) * 0.56);
-    t.rotation.x = Math.PI;
+    t.position.set(Math.cos(angle) * 0.44, -0.52, Math.sin(angle) * 0.44);
     tendrils.push(t);
     root.add(t);
   }

@@ -261,4 +261,22 @@ describe('GameEngine Phase 1-3 Core Logic (Contract v1.2)', () => {
     expect(engine.player.ultimateCharge).toBe(0);
     expect(engine.shades.every(s => s.state === 'stunned')).toBe(true);
   });
+
+  it('should autonomously patrol wandering Shades even when player is far and no weak lantern exists', () => {
+    const engine = new GameEngine(42, 1);
+    engine.applyScenario({
+      player: { pos: [0, 0, 0], carried: 0, flames: 3 },
+      random_motes: false,
+      random_shades: false,
+      shades: [{ id: 'S_patrol', pos: [28, 0, 0], state: 'wander' }]
+    });
+
+    const startX = engine.shades[0].pos[0];
+    const startZ = engine.shades[0].pos[2];
+    for (let t = 0; t < 60; t++) engine.step({ tick: t });
+
+    const movedDist = Math.hypot(engine.shades[0].pos[0] - startX, engine.shades[0].pos[2] - startZ);
+    expect(engine.shades[0].state).toBe('wander');
+    expect(movedDist).toBeGreaterThan(1.5);
+  });
 });

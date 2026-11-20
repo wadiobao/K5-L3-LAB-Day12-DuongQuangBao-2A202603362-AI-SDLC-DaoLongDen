@@ -76,6 +76,15 @@ export const DEFAULT_TUNING_V12: TuningConfig = {
 /** Alias retained for backward compatibility with imports referencing v1.1 constant name. */
 export const DEFAULT_TUNING_V11 = DEFAULT_TUNING_V12;
 
+function hashIdAngle(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 3600) * ((Math.PI * 2) / 3600);
+}
+
 export class GameEngine {
   public tuning: TuningConfig;
   public prng: PRNG;
@@ -1080,8 +1089,12 @@ export class GameEngine {
           }
         }
         if (!blocked && !checkSolidObstacle(nextX, nextZ, s.pos[1], this.night)) {
-          s.pos[0] = nextX;
-          s.pos[2] = nextZ;
+          const nextGround = getGroundHeight(nextX, nextZ, this.night, s.pos[1]);
+          if (nextGround > -10) {
+            s.pos[0] = nextX;
+            s.pos[1] = nextGround;
+            s.pos[2] = nextZ;
+          }
         }
       } else if (s.state === 'wander' && weakLanterns.length > 0) {
         // Wander seeks nearest lit lantern with fuel < 30 (tie-break smaller id)
@@ -1113,10 +1126,53 @@ export class GameEngine {
               }
             }
             if (!blocked && !checkSolidObstacle(nextX, nextZ, s.pos[1], this.night)) {
-              s.pos[0] = nextX;
-              s.pos[2] = nextZ;
+              const nextGround = getGroundHeight(nextX, nextZ, this.night, s.pos[1]);
+              if (nextGround > -10) {
+                s.pos[0] = nextX;
+                s.pos[1] = nextGround;
+                s.pos[2] = nextZ;
+              }
             }
           }
+        }
+      } else if (s.state === 'wander') {
+        // Autonomous deterministic patrol across the island when no weak lantern is active
+        if (s.wanderAngle === undefined) {
+          const inward = Math.atan2(-s.pos[2], -s.pos[0]);
+          s.wanderAngle = inward + (hashIdAngle(s.id) - Math.PI) * 0.45;
+          s.wanderTicks = 0;
+        }
+        s.wanderTicks = (s.wanderTicks ?? 0) + 1;
+        if (s.wanderTicks % 150 === 0) {
+          const turnSign = ((s.wanderTicks / 150 + s.id.charCodeAt(s.id.length - 1)) % 2 === 0 ? 1 : -1);
+          s.wanderAngle += turnSign * 0.72;
+        }
+
+        const patrolSpeed = shadeSpeed * 0.62;
+        const dx = Math.cos(s.wanderAngle);
+        const dz = Math.sin(s.wanderAngle);
+        const nextX = s.pos[0] + dx * patrolSpeed;
+        const nextZ = s.pos[2] + dz * patrolSpeed;
+
+        let blocked = false;
+        for (const l of safeLanterns) {
+          if (distanceXZ([nextX, 0, nextZ], l.pos) < this.tuning.safe_radius + 0.35) {
+            blocked = true;
+            break;
+          }
+        }
+        // Keep patrol comfortably inside playable island edges
+        const nextGround = getGroundHeight(nextX, nextZ, this.night, s.pos[1]);
+        const lookAheadGround = getGroundHeight(nextX + dx * 2.0, nextZ + dz * 2.0, this.night, s.pos[1]);
+        if (!blocked && nextGround > -10 && lookAheadGround > -10 && !checkSolidObstacle(nextX, nextZ, s.pos[1], this.night)) {
+          s.pos[0] = nextX;
+          s.pos[1] = nextGround;
+          s.pos[2] = nextZ;
+        } else {
+          // Smoothly steer away from safe zones or island cliffs
+          const centerX = this.night === 2 && s.pos[0] > 35 ? 70 : 0;
+          const toCenter = Math.atan2(-s.pos[2], centerX - s.pos[0]);
+          s.wanderAngle = blocked ? s.wanderAngle + 1.45 : toCenter + (hashIdAngle(s.id) - Math.PI) * 0.35;
         }
       }
     }
@@ -1137,6 +1193,22 @@ export class GameEngine {
       if (d.state === 'idle') {
         if (this.player.carried >= 5 && dist <= 15.0) {
           d.state = 'chase';
+        } else {
+          // Autonomous gliding wind-patrol across the island while idle
+          if (d.idleAngle === undefined) d.idleAngle = hashIdAngle(d.id);
+          d.idleAngle += 0.0085;
+          const glideSpeed = 3.2 / 60;
+          const nextX = d.pos[0] + Math.cos(d.idleAngle) * glideSpeed;
+          const nextZ = d.pos[2] + Math.sin(d.idleAngle) * glideSpeed;
+          const maxX = this.night === 2 ? 92 : 36;
+          const minX = this.night === 2 ? -24 : -36;
+          if (nextX < minX || nextX > maxX || Math.abs(nextZ) > 34) {
+            const centerX = this.night === 2 ? 35 : 0;
+            d.idleAngle = Math.atan2(-d.pos[2], centerX - d.pos[0]);
+          } else {
+            d.pos[0] = nextX;
+            d.pos[2] = nextZ;
+          }
         }
       } else if (d.state === 'chase') {
         if (this.player.carried < 5 || dist > 18.0) {

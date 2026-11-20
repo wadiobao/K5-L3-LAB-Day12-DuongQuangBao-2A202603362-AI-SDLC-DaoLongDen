@@ -52,6 +52,8 @@ export interface ShadeState {
   pulsePushDir: Vector2D;
   target_lantern_id?: string;
   drainTicks: number;
+  wanderAngle?: number;
+  wanderTicks?: number;
 }
 
 export type MoteKind = 'random' | 'dropped';
@@ -74,6 +76,7 @@ export interface DrifterEntity {
   fleeTicks: number;
   hasStolen: boolean;
   vanishTicks: number;
+  idleAngle?: number;
 }
 
 export interface CharmEntity {

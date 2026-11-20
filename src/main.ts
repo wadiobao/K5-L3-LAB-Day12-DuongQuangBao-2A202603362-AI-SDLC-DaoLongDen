@@ -187,7 +187,10 @@ class GameView {
   private flyoverTimer: number = 0;
   private flyoverDuration: number = 2.2;
   private shadePool: ShadeVisual[] = [];
+  private shadePrevPos: Map<string, [number, number]> = new Map();
+  private shadeYaws: Map<string, number> = new Map();
   private drifterPool: DrifterVisual[] = [];
+  private drifterPrevPos: Map<string, [number, number]> = new Map();
   private charmPool: THREE.Group[] = [];
   private pulseVfx!: PulseVfx;
   private ultimateVfx!: UltimateSlashVfx;
@@ -663,6 +666,9 @@ class GameView {
     this.lastCountdownSec = -1;
     this.windWarnedCycle = false;
     this.lowFuelWarnedIds.clear();
+    this.shadePrevPos.clear();
+    this.shadeYaws.clear();
+    this.drifterPrevPos.clear();
     this.scoreSavedThisEnd = false;
     this.playerYaw = 0;
     this.engine = new GameEngine(this.currentSeed, night, DEFAULT_TUNING_V12);
@@ -1918,39 +1924,66 @@ class GameView {
       this.moteWingRInstanced.instanceMatrix.needsUpdate = true;
     }
 
-    // Articulated Shades + Drain Beam
+    // Articulated Shades + Drain Beam (smooth facing along actual travel direction + zero ground clipping)
     const rimHex = this.colorblindMode ? 0x00b3ff : COLORS.shadeRim;
     for (let i = 0; i < this.shadePool.length; i++) {
       const sv = this.shadePool[i];
       if (!this.isBenchMode && i < this.engine.shades.length) {
         const s = this.engine.shades[i];
         sv.root.visible = true;
-        sv.root.position.set(s.pos[0], s.pos[1] + 0.95 + Math.sin(time * 3.5 + i) * 0.16, s.pos[2]);
+        const bob = this.reduceMotion ? 0 : Math.sin(time * 3.5 + i) * 0.14;
+        // Elevated y + 1.25 guarantees bottom tendrils (-1.20 local) never sink into the island grass
+        sv.root.position.set(s.pos[0], s.pos[1] + 1.25 + bob, s.pos[2]);
 
-        const dx = p.pos[0] - s.pos[0];
-        const dz = p.pos[2] - s.pos[2];
-        sv.root.rotation.y = Math.atan2(dx, dz);
+        // Face actual movement direction when patrolling/recoiling, target lantern when draining, or player when chasing
+        const prev = this.shadePrevPos.get(s.id);
+        let desiredYaw = this.shadeYaws.get(s.id) ?? Math.atan2(p.pos[0] - s.pos[0], p.pos[2] - s.pos[2]);
+        if (s.state === 'chase') {
+          desiredYaw = Math.atan2(p.pos[0] - s.pos[0], p.pos[2] - s.pos[2]);
+        } else if (s.state === 'drain' && s.target_lantern_id) {
+          const tL = this.engine.lanterns.find(l => l.id === s.target_lantern_id);
+          if (tL) desiredYaw = Math.atan2(tL.pos[0] - s.pos[0], tL.pos[2] - s.pos[2]);
+        } else if (prev) {
+          const mx = s.pos[0] - prev[0];
+          const mz = s.pos[2] - prev[1];
+          if (mx * mx + mz * mz > 0.00008) {
+            desiredYaw = Math.atan2(mx, mz);
+          } else if (s.wanderAngle !== undefined) {
+            desiredYaw = Math.atan2(Math.cos(s.wanderAngle), Math.sin(s.wanderAngle));
+          }
+        }
+        this.shadePrevPos.set(s.id, [s.pos[0], s.pos[2]]);
+        let curYaw = this.shadeYaws.get(s.id) ?? desiredYaw;
+        let yawDiff = desiredYaw - curYaw;
+        while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+        while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+        curYaw += yawDiff * Math.min(1, dt * 10);
+        this.shadeYaws.set(s.id, curYaw);
+        sv.root.rotation.y = curYaw;
 
         sv.eyeMat.color.setHex(this.colorblindMode ? 0x00b3ff : 0xe6d4ff);
         (sv.auraSprite.material as THREE.SpriteMaterial).color.setHex(rimHex);
         sv.drainBeamMat.color.setHex(rimHex);
 
+        // Always reset pitch/roll cleanly per state so tilts never leak between states
+        sv.root.rotation.x = 0;
+        sv.root.rotation.z = 0;
+
         if (s.state === 'stunned') {
           sv.coreMat.emissive.setHex(COLORS.shadeStunned);
-          sv.root.rotation.z = this.reduceMotion ? 0 : Math.sin(time * 18) * 0.28;
+          sv.root.rotation.z = this.reduceMotion ? 0 : Math.sin(time * 18) * 0.24;
           sv.root.scale.setScalar(0.88);
           sv.drainBeam.visible = false;
         } else if (s.state === 'spawning') {
           sv.coreMat.emissive.setHex(rimHex);
-          sv.root.scale.setScalar(0.5);
+          sv.root.scale.setScalar(0.55);
           sv.drainBeam.visible = false;
         } else if (s.state === 'drain') {
           sv.coreMat.emissive.setHex(rimHex);
-          sv.root.rotation.z = 0;
-          sv.root.scale.setScalar(1.12 + Math.sin(time * 10) * 0.08);
+          sv.root.scale.setScalar(1.1 + (this.reduceMotion ? 0 : Math.sin(time * 10) * 0.06));
           const target = s.target_lantern_id ? this.engine.lanterns.find(l => l.id === s.target_lantern_id) : undefined;
           if (target) {
-            _scratchVec.set(s.pos[0], s.pos[1] + 1.1, s.pos[2]);
+            _scratchVec.set(s.pos[0], s.pos[1] + 1.55, s.pos[2]);
             _scratchVec2.set(target.pos[0], target.pos[1] + 4.0, target.pos[2]);
             const dist = _scratchVec.distanceTo(_scratchVec2);
             sv.drainBeam.position.copy(_scratchVec).lerp(_scratchVec2, 0.5);
@@ -1962,21 +1995,21 @@ class GameView {
           }
         } else {
           sv.coreMat.emissive.setHex(rimHex);
-          sv.root.rotation.z = 0;
-          sv.root.rotation.x = s.state === 'chase' ? 0.22 : 0;
+          sv.root.rotation.x = s.state === 'chase' ? 0.18 : 0.08;
           sv.root.scale.setScalar(1.0);
           sv.drainBeam.visible = false;
         }
 
-        const whipSpeed = s.state === 'chase' || s.state === 'drain' ? 10 : 4;
+        const whipSpeed = s.state === 'chase' || s.state === 'drain' ? 8.5 : 4.2;
         sv.tendrils.forEach((t, ti) => {
-          t.rotation.z = this.reduceMotion ? 0 : Math.sin(time * whipSpeed + ti * 1.1) * 0.48;
+          t.rotation.x = this.reduceMotion ? 0 : Math.sin(time * whipSpeed + ti * 1.1) * 0.26 - 0.15;
+          t.rotation.z = this.reduceMotion ? 0 : Math.cos(time * whipSpeed + ti * 1.3) * 0.22;
         });
         (sv.runeRing.material as THREE.MeshBasicMaterial).color.setHex(rimHex);
         sv.runeRing.rotation.z = this.reduceMotion ? 0 : time * (s.state === 'drain' ? 4.5 : 1.8) + i;
         sv.orbitWisps.forEach((w, wi) => {
           const wa = time * 2.8 + wi * ((Math.PI * 2) / 3) + i;
-          w.position.set(Math.cos(wa) * 1.05, 0.25 + Math.sin(wa * 1.6) * 0.28, Math.sin(wa) * 1.05);
+          w.position.set(Math.cos(wa) * 0.96, 0.3 + Math.sin(wa * 1.6) * 0.22, Math.sin(wa) * 0.96);
           w.rotation.y = wa * 2;
         });
       } else {
@@ -1985,7 +2018,7 @@ class GameView {
       }
     }
 
-    // Flowing Silk Drifters (zero-allocation)
+    // Flowing Silk Drifters (face actual glide/chase/flee direction)
     let drifterSlot = 0;
     if (!this.isBenchMode) {
       for (let di = 0; di < this.engine.drifters.length && drifterSlot < this.drifterPool.length; di++) {
@@ -1994,7 +2027,15 @@ class GameView {
         const dv = this.drifterPool[drifterSlot];
         dv.root.visible = true;
         dv.root.position.set(d.pos[0], d.pos[1] + 1.85 + Math.sin(time * 4 + drifterSlot) * 0.25, d.pos[2]);
-        dv.root.rotation.y = Math.atan2(p.pos[0] - d.pos[0], p.pos[2] - d.pos[2]) + (d.state === 'flee' ? Math.PI : 0);
+        const dPrev = this.drifterPrevPos.get(d.id);
+        if (d.state === 'idle' && dPrev) {
+          const dmx = d.pos[0] - dPrev[0];
+          const dmz = d.pos[2] - dPrev[1];
+          if (dmx * dmx + dmz * dmz > 0.00004) dv.root.rotation.y = Math.atan2(dmx, dmz);
+        } else {
+          dv.root.rotation.y = Math.atan2(p.pos[0] - d.pos[0], p.pos[2] - d.pos[2]) + (d.state === 'flee' ? Math.PI : 0);
+        }
+        this.drifterPrevPos.set(d.id, [d.pos[0], d.pos[2]]);
         dv.segments.forEach((seg, si) => {
           seg.position.y = Math.sin(time * 10 - si * 0.85) * 0.2;
           seg.rotation.x = Math.cos(time * 10 - si * 0.85) * 0.28;

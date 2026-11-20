@@ -1,6 +1,6 @@
 {
   "contract_version": "1.3",
-  "verified_at": "2026-11-20T10:46:30.798Z",
+  "verified_at": "2026-11-20T10:54:22.723Z",
   "soak": {
     "nights": 10,
     "crashes": 0,
@@ -16,11 +16,11 @@
       "lost",
       "lost"
     ],
-    "mem_start_mb": 50.4,
-    "mem_end_mb": 59.7,
-    "duration_s": 0.56
+    "mem_start_mb": 48.5,
+    "mem_end_mb": 50.3,
+    "duration_s": 1.09
   },
-  "soak_mem_ratio": 1.185,
+  "soak_mem_ratio": 1.037,
   "leaderboard_entries": 0,
   "bench_present": true,
   "bench": {
