@@ -1,0 +1,35 @@
+{
+  "contract_version": "1.0",
+  "team": "2A202603362-DuongQuangBao",
+  "build_cmd": "pnpm install && pnpm build",
+  "run_cmd": "pnpm preview",
+  "headless_cmd": "pnpm headless",
+  "tuning": {
+    "player_speed": 6.0,
+    "carry_capacity": 10,
+    "lantern_cost": 5,
+    "lantern_count_night1": 5,
+    "pickup_radius": 1.5,
+    "interact_radius": 3.0,
+    "pulse_cost": 1,
+    "pulse_radius": 5.0,
+    "night1_duration_s": 300,
+    "flames": 3,
+    "invuln_s": 2.0,
+    "hit_drop_ratio": 0.5,
+    "pulse_stun_s": 3.0,
+    "pulse_push_m": 4.0,
+    "pulse_cooldown_s": 1.0,
+    "safe_radius": 4.0,
+    "shade_speed": 3.5,
+    "shade_hit_radius": 1.0,
+    "fall_enabled": false,
+    "score": {
+      "per_mote": 10,
+      "per_lantern": 200,
+      "per_stun": 50,
+      "per_second_left": 5,
+      "per_flame_left": 100
+    }
+  }
+}
