@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "play": "tsx scripts/play.ts",
     "headless": "tsx src/headless/cli.ts",
+    "bench": "tsx scripts/bench.ts",
+    "soak": "node --expose-gc --max-semi-space-size=2 --optimize-for-size --import tsx scripts/soak.ts",
     "test": "vitest run",
     "verify": "tsx scripts/verify.ts"
   },

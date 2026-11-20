@@ -1,14 +1,37 @@
 /**
  * @file main.ts
- * @description Interactive 3D WebGL View for all 3 Nights with rich procedural visuals & animations,
- * adhering to PRD-1 palette, three-best-practices (VRAM disposal, InstancedMesh, zero-allocation loop),
- * and 3d-games camera rules.
+ * @description Interactive 3D WebGL View v1.0.0 (Contract v1.3):
+ * - Standard 3-Night campaign with procedural PBR textures, GLSL Sky/Cloud Sea, Bloom, and articulated rigs.
+ * - Benchmark mode (?bench=1&seed=42&duration=30): 200 instanced Shades, 100 Motes, L1-L3 lit, R=30m orbit camera.
+ * - Full Accessibility: 9-action Keybind Remapping + conflict alert, Visual Captions & Edge Arrows,
+ *   Colorblind Mode, Reduce Motion, >=18px UI & 1.25x Large Text.
+ * - Local Top-10 Leaderboard with disk API + localStorage persistence.
  */
 
 import * as THREE from 'three';
-import { GameEngine, DEFAULT_TUNING_V11 } from './core/engine.js';
-import { getJumpPads } from './core/terrain.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { GameEngine, DEFAULT_TUNING_V12 } from './core/engine.js';
+import { PRNG } from './core/prng.js';
+import { getGroundHeight, getJumpPads } from './core/terrain.js';
+import {
+  LeaderboardEntry,
+  addLeaderboardEntry,
+  formatIsoWithTimezone,
+  sortAndTrimLeaderboard,
+  validatePlayerName
+} from './core/leaderboard.js';
 import { soundFx } from './render/audio.js';
+import { ProceduralTextures, createProceduralTextures } from './render/textures.js';
+import {
+  SkyDomeHandle,
+  CloudSeaHandle,
+  ParticleBurstSystem,
+  createSkyDome,
+  createCloudSea
+} from './render/shaders.js';
 import {
   COLORS,
   PlayerRig,
@@ -28,54 +51,128 @@ import {
 // Pre-allocated scratch objects (zero-allocation render loop per three-best-practices)
 const _cameraTarget = new THREE.Vector3();
 const _scratchVec = new THREE.Vector3();
+const _scratchVec2 = new THREE.Vector3();
 const _scratchMatrix = new THREE.Matrix4();
 const _scratchScale = new THREE.Vector3();
 const _scratchQuat = new THREE.Quaternion();
 const _projVec = new THREE.Vector3();
 
+type ActionKey = 'up' | 'down' | 'left' | 'right' | 'jump' | 'dash' | 'interact' | 'pulse' | 'pause';
+
+const DEFAULT_KEYBINDS: Record<ActionKey, string> = {
+  up: 'w',
+  down: 's',
+  left: 'a',
+  right: 'd',
+  jump: ' ',
+  dash: 'shift',
+  interact: 'e',
+  pulse: 'f',
+  pause: 'escape'
+};
+
+const ACTION_LABELS: Record<ActionKey, string> = {
+  up: 'Đi tới',
+  down: 'Đi lùi',
+  left: 'Sang trái',
+  right: 'Sang phải',
+  jump: 'Nhảy',
+  dash: 'Lướt (Dash)',
+  interact: 'Nạp / Châm dầu',
+  pulse: 'Tỏa sáng (Pulse)',
+  pause: 'Tạm dừng'
+};
+
 const NIGHT_INTROS: Record<number, { title: string; quote: string }> = {
   1: {
     title: 'Đêm 1 — Đảo Bến',
-    quote: '"Mây ơi, sương đen đã nuốt chửng bến thuyền. Hãy thắp lại 5 Đèn Lồng Lớn trước khi trời rạng!" — Ông Đăng'
+    quote: '"Mây ơi, sương đen đã nuốt chửng bến thuyền. Hãy giữ ít nhất 3/5 Đèn Lồng sáng tới bình minh!" — Ông Đăng'
   },
   2: {
     title: 'Đêm 2 — Đảo Cau',
-    quote: '"Cầu tre hẹp và Gió Lạc rất ranh mãnh! Hãy tận dụng bục nhảy và Bùa Gió để thắp đủ 6 ngọn đèn." — Ông Đăng'
+    quote: '"Cầu tre hẹp và Gió Lạc rất ranh mãnh! Hãy tận dụng bục nhảy và Bùa Gió để giữ ít nhất 4/6 ngọn đèn sáng." — Ông Đăng'
   },
   3: {
     title: 'Đêm 3 — Đảo Chuông',
-    quote: '"Ba tầng đảo và gió giật dữ dội. Thắp sáng cả 7 ngọn đèn để đón Bình Minh cho quần đảo!" — Ông Đăng'
+    quote: '"Ba tầng đảo và gió giật dữ dội. Giữ ít nhất 5/7 ngọn đèn sáng tới bình minh để cứu lấy quần đảo!" — Ông Đăng'
   }
 };
+
+function formatKeyLabel(k: string): string {
+  if (k === ' ') return 'Space';
+  if (k === 'escape') return 'Esc';
+  if (k === 'shift') return 'Shift';
+  return k.length === 1 ? k.toUpperCase() : k;
+}
 
 class GameView {
   private engine: GameEngine;
   private currentNight: number = 1;
+  private currentSeed: number = 42;
   private totalCampaignScore: number = 0;
+  private nightsWonCount: number = 0;
   private isInGame: boolean = false;
   private settingsReturnTo: 'menu' | 'pause' = 'menu';
   private lastCountdownSec: number = -1;
   private colorblindMode: boolean = false;
+  private reduceMotion: boolean = false;
+  private largeText: boolean = false;
+  private keybinds: Record<ActionKey, string> = { ...DEFAULT_KEYBINDS };
+  private listeningAction: ActionKey | null = null;
+  private scoreSavedThisEnd: boolean = false;
+
+  // Benchmark mode state (Ticket-04 Section 1)
+  private isBenchMode: boolean = false;
+  private benchSeed: number = 42;
+  private benchDurationSec: number = 30;
+  private benchProcessT0: number = 0;
+  private benchStartWallMs: number = 0;
+  private benchFirstFrameMs: number = 0;
+  private benchFrameDts: number[] = [];
+  private benchFinished: boolean = false;
+  private benchShadesInstanced: THREE.InstancedMesh | null = null;
+  private benchShadePos: Array<{ x: number; z: number; vx: number; vz: number }> = [];
+
+  // Caption & Indicator timers
+  private captionTimer: number = 0;
+  private shadeAlertTimer: number = 0;
+  private lastAlertedShadePos: [number, number, number] | null = null;
+  private windWarnedCycle: boolean = false;
+  private lowFuelWarnedIds: Set<string> = new Set();
+
+  // Character animation states
   private playerYaw: number = 0;
+  private bankAngle: number = 0;
   private runCycle: number = 0;
+  private lastFootstepIndex: number = 0;
   private landingSquash: number = 0;
+  private interactAnimTimer: number = 0;
+  private pulseAnimTimer: number = 0;
 
   private canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
+  private composer: EffectComposer;
+  private bloomPass: UnrealBloomPass;
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private ambientLight!: THREE.AmbientLight;
+  private textures: ProceduralTextures;
+  private skyDome!: SkyDomeHandle;
+  private cloudSea!: CloudSeaHandle;
+  private particleSystem!: ParticleBurstSystem;
 
-  // Dynamic level group for clean VRAM disposal on night switch
   private levelGroup: THREE.Group = new THREE.Group();
   private playerRig!: PlayerRig;
   private lanternVisuals: LanternVisual[] = [];
   private moteCoreInstanced!: THREE.InstancedMesh;
   private moteHaloInstanced!: THREE.InstancedMesh;
   private windLeavesInstanced!: THREE.InstancedMesh;
-  private cloudPuffs: THREE.Mesh[] = [];
+  private ambientDust!: THREE.Points;
   private jumpPadRings: THREE.Mesh[] = [];
   private bellMesh: THREE.Mesh | null = null;
+  private boatGroup: THREE.Group | null = null;
+  private floatingRocks: THREE.Mesh[] = [];
+  private swayFoliageGroups: THREE.Group[] = [];
   private shadePool: ShadeVisual[] = [];
   private drifterPool: DrifterVisual[] = [];
   private charmPool: THREE.Group[] = [];
@@ -105,48 +202,166 @@ class GameView {
   private charmBadgeUI!: HTMLElement;
   private charmCdUI!: HTMLElement;
   private arrowUI!: HTMLElement;
+  private shadeArrowUI!: HTMLElement;
+  private captionBarUI!: HTMLElement;
+  private benchBannerUI!: HTMLElement;
 
   private menuOverlay!: HTMLElement;
   private introOverlay!: HTMLElement;
   private pauseOverlay!: HTMLElement;
   private settingsOverlay!: HTMLElement;
+  private leaderboardOverlay!: HTMLElement;
   private modalOverlay!: HTMLElement;
 
   constructor() {
+    const params = new URLSearchParams(window.location.search);
+    this.isBenchMode = params.get('bench') === '1';
+    this.benchSeed = parseInt(params.get('seed') || '42', 10);
+    this.benchDurationSec = parseFloat(params.get('duration') || '30');
+    this.benchProcessT0 = parseInt(params.get('t0') || '0', 10);
+
     this.canvas = document.getElementById('webgl-canvas') as HTMLCanvasElement;
-    this.engine = new GameEngine(42, 1, DEFAULT_TUNING_V11);
+    this.engine = new GameEngine(this.benchSeed, 1, DEFAULT_TUNING_V12);
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
       antialias: true,
       powerPreference: 'high-performance'
     });
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const initW = this.isBenchMode ? 1280 : window.innerWidth;
+    const initH = this.isBenchMode ? 720 : window.innerHeight;
+    this.renderer.setSize(initW, initH);
+    this.renderer.setPixelRatio(this.isBenchMode ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1;
+    this.renderer.toneMappingExposure = 1.08;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(COLORS.sky);
-    this.scene.fog = new THREE.FogExp2(COLORS.fog, 0.0105);
+    this.scene.fog = new THREE.FogExp2(COLORS.fog, 0.0095);
     this.scene.add(this.levelGroup);
 
-    this.camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 300);
+    this.camera = new THREE.PerspectiveCamera(52, initW / initH, 0.1, 320);
     this.camera.position.set(0, 12, -16);
 
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(initW, initH), 0.4, 0.52, 0.78);
+    this.composer.addPass(this.bloomPass);
+    this.composer.addPass(new OutputPass());
+
+    this.textures = createProceduralTextures();
+
+    this.loadPreferences();
     this.bindUI();
     this.setupLighting();
     this.buildStaticBackdrop();
-    this.playerRig = createPlayerRig();
-    this.scene.add(this.playerRig.root);
+    this.playerRig = createPlayerRig(this.textures);
+    this.scene.add(this.playerRig.root, this.playerRig.groundShadow);
     this.buildEntityPools();
-    this.buildNightGeometry(1);
-    this.setupControls();
+
+    if (this.isBenchMode) {
+      this.setupBenchmarkScene();
+    } else {
+      this.buildNightGeometry(1, false);
+      this.setupControls();
+    }
 
     window.addEventListener('resize', () => this.onWindowResize());
     this.startLoop();
+  }
+
+  private loadPreferences(): void {
+    this.colorblindMode = localStorage.getItem('ddl_colorblind') === 'true';
+    this.reduceMotion = localStorage.getItem('ddl_reduce_motion') === 'true';
+    this.largeText = localStorage.getItem('ddl_large_text') === 'true';
+    document.body.classList.toggle('colorblind', this.colorblindMode);
+    document.body.classList.toggle('reduce-motion', this.reduceMotion);
+    document.body.classList.toggle('large-text', this.largeText);
+
+    try {
+      const rawKeys = localStorage.getItem('ddl_keybinds');
+      if (rawKeys) {
+        const parsed = JSON.parse(rawKeys) as Partial<Record<ActionKey, string>>;
+        this.keybinds = { ...DEFAULT_KEYBINDS, ...parsed };
+      }
+    } catch {
+      this.keybinds = { ...DEFAULT_KEYBINDS };
+    }
+  }
+
+  /**
+   * Configures the standardized Benchmark Scene per Ticket-04 Section 1:
+   * - Night 1, creative additions disabled, 200 instanced wandering Shades (seed 42),
+   * - 100 instanced Motes, L1-L3 lit with fuel 100, Mây idle at (0,0,0),
+   * - Orbit camera R=30m, Y=15m, starting at (30,15,0), 15s/rev CCW.
+   */
+  private setupBenchmarkScene(): void {
+    this.menuOverlay.classList.remove('active');
+    this.hudEl.style.display = 'none';
+    this.benchBannerUI.style.display = 'block';
+    this.ambientDust.visible = false;
+
+    this.engine = new GameEngine(this.benchSeed, 1, DEFAULT_TUNING_V12);
+    this.engine.applyScenario({
+      random_motes: false,
+      random_shades: false,
+      lanterns: [
+        { id: 'L1', lit: true, fuel: 100 },
+        { id: 'L2', lit: true, fuel: 100 },
+        { id: 'L3', lit: true, fuel: 100 }
+      ]
+    });
+
+    this.buildNightGeometry(1, true); // standard bench geometry, creative props disabled
+
+    // Spawn exactly 100 motes distributed over island
+    const rng = new PRNG(this.benchSeed);
+    this.engine.motes = [];
+    for (let i = 0; i < 100; i++) {
+      const a = rng.nextFloat() * Math.PI * 2;
+      const r = Math.sqrt(rng.nextFloat()) * 36;
+      this.engine.motes.push({
+        id: `BM${i + 1}`,
+        pos: [Math.cos(a) * r, 0, Math.sin(a) * r],
+        active: true,
+        kind: 'random',
+        ttlTicks: 0
+      });
+    }
+
+    // Spawn exactly 200 wandering Shades via single InstancedMesh (1 draw call for high FPS)
+    const shadeGeo = new THREE.DodecahedronGeometry(0.68, 1);
+    const shadeMat = new THREE.MeshStandardMaterial({
+      color: COLORS.shadeBody,
+      emissive: COLORS.shadeRim,
+      emissiveIntensity: 0.75,
+      roughness: 0.25
+    });
+    this.benchShadesInstanced = new THREE.InstancedMesh(shadeGeo, shadeMat, 200);
+    this.benchShadesInstanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.scene.add(this.benchShadesInstanced);
+
+    this.benchShadePos = [];
+    for (let i = 0; i < 200; i++) {
+      const a = rng.nextFloat() * Math.PI * 2;
+      const r = 6 + Math.sqrt(rng.nextFloat()) * 32;
+      const dir = rng.nextFloat() * Math.PI * 2;
+      this.benchShadePos.push({
+        x: Math.cos(a) * r,
+        z: Math.sin(a) * r,
+        vx: Math.cos(dir) * 4.0,
+        vz: Math.sin(dir) * 4.0
+      });
+    }
+
+    this.camera.position.set(30, 15, 0);
+    this.camera.lookAt(0, 0, 0);
+    // Static geometry in bench mode: bake shadow map once instead of re-rendering 360x/s
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
+    this.benchStartWallMs = performance.now();
   }
 
   private bindUI(): void {
@@ -166,11 +381,15 @@ class GameView {
     this.charmBadgeUI = document.getElementById('charm-badge')!;
     this.charmCdUI = document.getElementById('charm-cd')!;
     this.arrowUI = document.getElementById('lantern-arrow')!;
+    this.shadeArrowUI = document.getElementById('shade-arrow')!;
+    this.captionBarUI = document.getElementById('caption-bar')!;
+    this.benchBannerUI = document.getElementById('bench-banner')!;
 
     this.menuOverlay = document.getElementById('menu-overlay')!;
     this.introOverlay = document.getElementById('intro-overlay')!;
     this.pauseOverlay = document.getElementById('pause-overlay')!;
     this.settingsOverlay = document.getElementById('settings-overlay')!;
+    this.leaderboardOverlay = document.getElementById('leaderboard-overlay')!;
     this.modalOverlay = document.getElementById('game-modal')!;
 
     this.moteSlotsUI.innerHTML = '';
@@ -182,6 +401,7 @@ class GameView {
 
     document.getElementById('btn-start-game')!.addEventListener('click', () => {
       this.totalCampaignScore = 0;
+      this.nightsWonCount = 0;
       this.showNightIntro(1);
     });
     document.getElementById('btn-start-n2')!.addEventListener('click', () => this.showNightIntro(2));
@@ -192,6 +412,15 @@ class GameView {
     document.getElementById('btn-restart-night')!.addEventListener('click', () => this.startNight(this.currentNight));
     document.getElementById('btn-back-menu')!.addEventListener('click', () => this.showMenu());
 
+    // Leaderboard screen
+    document.getElementById('btn-open-leaderboard')!.addEventListener('click', () => this.openLeaderboard());
+    document.getElementById('btn-close-leaderboard')!.addEventListener('click', () => {
+      this.leaderboardOverlay.classList.remove('active');
+      this.menuOverlay.classList.add('active');
+    });
+    document.getElementById('btn-save-score')!.addEventListener('click', () => this.saveCurrentScore());
+
+    // Settings controls
     const volSlider = document.getElementById('vol-slider') as HTMLInputElement;
     const volVal = document.getElementById('vol-val')!;
     const sensSlider = document.getElementById('sens-slider') as HTMLInputElement;
@@ -213,13 +442,37 @@ class GameView {
     });
 
     const cbColorblind = document.getElementById('cb-colorblind') as HTMLInputElement;
-    this.colorblindMode = localStorage.getItem('ddl_colorblind') === 'true';
+    const cbReduce = document.getElementById('cb-reduce-motion') as HTMLInputElement;
+    const cbLarge = document.getElementById('cb-large-text') as HTMLInputElement;
     cbColorblind.checked = this.colorblindMode;
-    document.body.classList.toggle('colorblind', this.colorblindMode);
+    cbReduce.checked = this.reduceMotion;
+    cbLarge.checked = this.largeText;
+
     cbColorblind.addEventListener('change', () => {
       this.colorblindMode = cbColorblind.checked;
       localStorage.setItem('ddl_colorblind', String(this.colorblindMode));
       document.body.classList.toggle('colorblind', this.colorblindMode);
+    });
+    cbReduce.addEventListener('change', () => {
+      this.reduceMotion = cbReduce.checked;
+      localStorage.setItem('ddl_reduce_motion', String(this.reduceMotion));
+      document.body.classList.toggle('reduce-motion', this.reduceMotion);
+    });
+    cbLarge.addEventListener('change', () => {
+      this.largeText = cbLarge.checked;
+      localStorage.setItem('ddl_large_text', String(this.largeText));
+      document.body.classList.toggle('large-text', this.largeText);
+    });
+
+    // Keybind Remapping UI
+    this.renderKeybindSettings();
+    document.getElementById('btn-reset-keys')!.addEventListener('click', () => {
+      this.keybinds = { ...DEFAULT_KEYBINDS };
+      this.listeningAction = null;
+      localStorage.setItem('ddl_keybinds', JSON.stringify(this.keybinds));
+      document.getElementById('keybind-warn')!.innerText = 'Đã khôi phục phím mặc định.';
+      this.renderKeybindSettings();
+      this.updateControlsHint();
     });
 
     document.getElementById('btn-open-settings-menu')!.addEventListener('click', () => {
@@ -233,6 +486,8 @@ class GameView {
       this.settingsOverlay.classList.add('active');
     });
     document.getElementById('btn-close-settings')!.addEventListener('click', () => {
+      this.listeningAction = null;
+      document.getElementById('keybind-warn')!.innerText = '';
       this.settingsOverlay.classList.remove('active');
       if (this.settingsReturnTo === 'menu') this.menuOverlay.classList.add('active');
       else this.pauseOverlay.classList.add('active');
@@ -241,15 +496,134 @@ class GameView {
     document.getElementById('btn-restart')!.addEventListener('click', () => this.startNight(this.currentNight));
     document.getElementById('btn-next-night')!.addEventListener('click', () => this.showNightIntro(this.currentNight + 1));
     document.getElementById('btn-modal-menu')!.addEventListener('click', () => this.showMenu());
+
+    this.updateControlsHint();
+  }
+
+  private renderKeybindSettings(): void {
+    const container = document.getElementById('keybind-list')!;
+    container.innerHTML = '';
+    (Object.keys(ACTION_LABELS) as ActionKey[]).forEach(action => {
+      const row = document.createElement('div');
+      row.className = 'keybind-row';
+      const label = document.createElement('span');
+      label.innerText = ACTION_LABELS[action];
+      const btn = document.createElement('button');
+      btn.className = 'keybind-btn' + (this.listeningAction === action ? ' listening' : '');
+      btn.innerText = this.listeningAction === action ? 'Nhấn phím...' : formatKeyLabel(this.keybinds[action]);
+      btn.addEventListener('click', () => {
+        this.listeningAction = action;
+        document.getElementById('keybind-warn')!.innerText = `Đang chờ phím mới cho "${ACTION_LABELS[action]}"...`;
+        this.renderKeybindSettings();
+      });
+      row.append(label, btn);
+      container.appendChild(row);
+    });
+  }
+
+  private updateControlsHint(): void {
+    const k = this.keybinds;
+    const hint = document.getElementById('controls-hint');
+    if (!hint) return;
+    hint.innerHTML =
+      `<div><span class="key-badge">${formatKeyLabel(k.up)}${formatKeyLabel(k.left)}${formatKeyLabel(k.down)}${formatKeyLabel(k.right)}</span> Chạy · ` +
+      `<span class="key-badge">${formatKeyLabel(k.jump)}</span> Nhảy · <span class="key-badge">${formatKeyLabel(k.dash)}</span> Lướt</div>` +
+      `<div><span class="key-badge">${formatKeyLabel(k.interact)}</span> Nạp/Châm · <span class="key-badge">${formatKeyLabel(k.pulse)}</span> Tỏa sáng · ` +
+      `<span class="key-badge">${formatKeyLabel(k.pause)}</span> Dừng</div>`;
+  }
+
+  private async loadLeaderboardEntries(): Promise<LeaderboardEntry[]> {
+    try {
+      const res = await fetch('/__api/leaderboard');
+      if (res.ok) {
+        const data = (await res.json()) as { entries: LeaderboardEntry[] };
+        if (Array.isArray(data.entries)) {
+          localStorage.setItem('ddl_leaderboard', JSON.stringify(data.entries));
+          return sortAndTrimLeaderboard(data.entries);
+        }
+      }
+    } catch {
+      // Static web fallback to localStorage
+    }
+    try {
+      const raw = localStorage.getItem('ddl_leaderboard');
+      return raw ? sortAndTrimLeaderboard(JSON.parse(raw) as LeaderboardEntry[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private async openLeaderboard(): Promise<void> {
+    this.menuOverlay.classList.remove('active');
+    this.leaderboardOverlay.classList.add('active');
+    const tbody = document.getElementById('lb-tbody')!;
+    const entries = await this.loadLeaderboardEntries();
+    if (entries.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#8FA3B8">Chưa có điểm nào được lưu.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = entries
+      .map(
+        (e, i) =>
+          `<tr><td>#${i + 1}</td><td>${e.name}</td><td style="color:#F2C14E;font-weight:700">${e.score}</td>` +
+          `<td>${e.nights_won}/3</td><td style="font-size:0.85em">${e.achieved_at.replace('T', ' ').slice(0, 19)}</td></tr>`
+      )
+      .join('');
+  }
+
+  private async saveCurrentScore(): Promise<void> {
+    if (this.scoreSavedThisEnd) return;
+    const inputEl = document.getElementById('player-name-input') as HTMLInputElement;
+    const msgEl = document.getElementById('save-score-msg')!;
+    const check = validatePlayerName(inputEl.value);
+    if (!check.valid) {
+      msgEl.innerText = `⚠ ${check.reason}`;
+      return;
+    }
+
+    const entry: LeaderboardEntry = {
+      name: check.cleaned,
+      score: this.totalCampaignScore,
+      nights_won: this.nightsWonCount,
+      achieved_at: formatIsoWithTimezone(new Date()),
+      seed: this.currentSeed
+    };
+
+    const existing = await this.loadLeaderboardEntries();
+    const updated = addLeaderboardEntry(existing, entry);
+    localStorage.setItem('ddl_leaderboard', JSON.stringify(updated));
+
+    try {
+      await fetch('/__api/leaderboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entry)
+      });
+    } catch {
+      // localStorage already saved
+    }
+
+    this.scoreSavedThisEnd = true;
+    msgEl.style.color = '#FFE9B0';
+    msgEl.innerText = `✔ Đã lưu điểm của ${entry.name} vào Bảng Xếp Hạng!`;
+  }
+
+  private showCaption(text: string, durationSec = 3.0): void {
+    this.captionBarUI.innerText = text;
+    this.captionBarUI.style.display = 'block';
+    this.captionTimer = Math.max(this.captionTimer, durationSec);
   }
 
   private showMenu(): void {
     this.isInGame = false;
     this.hudEl.style.display = 'none';
     this.arrowUI.style.display = 'none';
+    this.shadeArrowUI.style.display = 'none';
+    this.captionBarUI.style.display = 'none';
     this.introOverlay.classList.remove('active');
     this.pauseOverlay.classList.remove('active');
     this.modalOverlay.classList.remove('active');
+    this.leaderboardOverlay.classList.remove('active');
     this.menuOverlay.classList.add('active');
   }
 
@@ -266,10 +640,14 @@ class GameView {
 
   private startNight(night: number): void {
     this.currentNight = night;
+    this.currentSeed = Date.now() & 0xfffffff;
     this.lastCountdownSec = -1;
+    this.windWarnedCycle = false;
+    this.lowFuelWarnedIds.clear();
+    this.scoreSavedThisEnd = false;
     this.playerYaw = 0;
-    this.engine = new GameEngine(Date.now() & 0xfffffff, night, DEFAULT_TUNING_V11);
-    this.buildNightGeometry(night);
+    this.engine = new GameEngine(this.currentSeed, night, DEFAULT_TUNING_V12);
+    this.buildNightGeometry(night, false);
 
     this.nightLabelUI.innerText = NIGHT_INTROS[night]?.title ?? `Đêm ${night}`;
     this.introOverlay.classList.remove('active');
@@ -296,16 +674,16 @@ class GameView {
     this.ambientLight = new THREE.AmbientLight(0xd8e0ff, 0.15);
     this.scene.add(this.ambientLight);
 
-    const hemi = new THREE.HemisphereLight(0x4c5fa8, 0x12384a, 0.35);
+    const hemi = new THREE.HemisphereLight(0x5267b5, 0x12384a, 0.38);
     this.scene.add(hemi);
 
-    const moonLight = new THREE.DirectionalLight(0xb8ccff, 1.0);
-    moonLight.position.set(45, 75, 55);
+    const moonLight = new THREE.DirectionalLight(0xc2d5ff, 1.05);
+    moonLight.position.set(48, 78, 60);
     moonLight.castShadow = true;
     moonLight.shadow.mapSize.width = 1024;
     moonLight.shadow.mapSize.height = 1024;
     moonLight.shadow.camera.near = 10;
-    moonLight.shadow.camera.far = 200;
+    moonLight.shadow.camera.far = 210;
     moonLight.shadow.camera.left = -65;
     moonLight.shadow.camera.right = 100;
     moonLight.shadow.camera.top = 65;
@@ -314,116 +692,125 @@ class GameView {
   }
 
   private buildStaticBackdrop(): void {
-    // Cloud sea plane (#12384A)
-    const sea = new THREE.Mesh(
-      new THREE.PlaneGeometry(600, 600),
-      new THREE.MeshBasicMaterial({ color: COLORS.cloudSea })
-    );
-    sea.rotation.x = -Math.PI / 2;
-    sea.position.y = -11;
-    sea.matrixAutoUpdate = false;
-    sea.updateMatrix();
-    this.scene.add(sea);
+    this.skyDome = createSkyDome();
+    this.scene.add(this.skyDome.mesh);
 
-    // Glowing Moon high in the +Z sky
+    this.cloudSea = createCloudSea();
+    this.scene.add(this.cloudSea.mesh);
+
     const moon = new THREE.Mesh(
-      new THREE.SphereGeometry(9, 20, 20),
+      new THREE.SphereGeometry(9.5, 24, 24),
       new THREE.MeshBasicMaterial({ color: COLORS.lanternCore })
     );
-    moon.position.set(55, 78, 130);
+    moon.position.set(55, 76, 138);
     moon.matrixAutoUpdate = false;
     moon.updateMatrix();
     this.scene.add(moon);
 
-    // Starfield (Points — 1 draw call)
-    const starPositions = new Float32Array(260 * 3);
-    for (let i = 0; i < 260; i++) {
+    const moonHalo = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: this.textures.glowSpriteMap,
+        color: COLORS.lanternCore,
+        transparent: true,
+        opacity: 0.45,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    moonHalo.position.set(55, 76, 136);
+    moonHalo.scale.set(42, 42, 1);
+    this.scene.add(moonHalo);
+
+    const starPositions = new Float32Array(320 * 3);
+    for (let i = 0; i < 320; i++) {
       const theta = Math.random() * Math.PI * 2;
-      const phi = Math.random() * Math.PI * 0.42;
+      const phi = Math.random() * Math.PI * 0.43;
       const r = 175 + Math.random() * 35;
       starPositions[i * 3] = Math.cos(theta) * Math.sin(phi) * r;
-      starPositions[i * 3 + 1] = Math.cos(phi) * r + 15;
+      starPositions[i * 3 + 1] = Math.cos(phi) * r + 12;
       starPositions[i * 3 + 2] = Math.sin(theta) * Math.sin(phi) * r;
     }
     const starGeo = new THREE.BufferGeometry();
     starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
     const stars = new THREE.Points(
       starGeo,
-      new THREE.PointsMaterial({ color: 0xfff6c2, size: 1.1, transparent: true, opacity: 0.8 })
+      new THREE.PointsMaterial({ color: 0xfff6c2, size: 1.25, transparent: true, opacity: 0.85 })
     );
     stars.matrixAutoUpdate = false;
     stars.updateMatrix();
     this.scene.add(stars);
 
-    // Drifting Cloud Sea Puffs around the horizon
-    const cloudGeo = new THREE.DodecahedronGeometry(6, 1);
-    const cloudMat = new THREE.MeshStandardMaterial({
-      color: 0x1c4b62,
-      roughness: 0.95,
-      transparent: true,
-      opacity: 0.55
-    });
-    for (let i = 0; i < 18; i++) {
-      const puff = new THREE.Mesh(cloudGeo, cloudMat);
-      const angle = (i / 18) * Math.PI * 2;
-      const radius = 58 + (i % 3) * 18;
-      puff.position.set(Math.cos(angle) * radius, -6 - (i % 4), Math.sin(angle) * radius);
-      puff.scale.set(2.2, 0.55, 1.6);
-      this.cloudPuffs.push(puff);
-      this.scene.add(puff);
+    const dustPos = new Float32Array(100 * 3);
+    for (let i = 0; i < 100; i++) {
+      dustPos[i * 3] = (Math.random() - 0.5) * 90;
+      dustPos[i * 3 + 1] = 1 + Math.random() * 14;
+      dustPos[i * 3 + 2] = (Math.random() - 0.5) * 90;
     }
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+    this.ambientDust = new THREE.Points(
+      dustGeo,
+      new THREE.PointsMaterial({
+        map: this.textures.glowSpriteMap,
+        color: COLORS.moteGlow,
+        size: 0.55,
+        transparent: true,
+        opacity: 0.35,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    this.scene.add(this.ambientDust);
   }
 
   private buildEntityPools(): void {
-    // Dual-layer Motes InstancedMesh (bright core + soft translucent halo)
+    // Capacity 128 supports both standard gameplay (<=30) and Benchmark mode (100 motes)
     this.moteCoreInstanced = new THREE.InstancedMesh(
-      new THREE.SphereGeometry(0.16, 8, 8),
+      new THREE.SphereGeometry(0.17, 10, 10),
       new THREE.MeshBasicMaterial({ color: COLORS.moteCore }),
-      64
+      128
     );
     this.moteHaloInstanced = new THREE.InstancedMesh(
-      new THREE.SphereGeometry(0.38, 10, 10),
-      new THREE.MeshBasicMaterial({ color: COLORS.moteGlow, transparent: true, opacity: 0.35 }),
-      64
+      new THREE.SphereGeometry(0.42, 10, 10),
+      new THREE.MeshBasicMaterial({ color: COLORS.moteGlow, transparent: true, opacity: 0.38 }),
+      128
     );
     this.moteCoreInstanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.moteHaloInstanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.scene.add(this.moteCoreInstanced, this.moteHaloInstanced);
 
-    // Wind leaves InstancedMesh for Night 3 gusts (40 leaves)
     this.windLeavesInstanced = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(0.35, 0.16),
-      new THREE.MeshBasicMaterial({ color: COLORS.sand, side: THREE.DoubleSide, transparent: true, opacity: 0.75 }),
+      new THREE.PlaneGeometry(0.38, 0.17),
+      new THREE.MeshBasicMaterial({ color: COLORS.sand, side: THREE.DoubleSide, transparent: true, opacity: 0.8 }),
       40
     );
     this.windLeavesInstanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.windLeavesInstanced.visible = false;
     this.scene.add(this.windLeavesInstanced);
 
-    // Shades pool (max 10)
     for (let i = 0; i < 10; i++) {
-      const sv = createShadeVisual();
+      const sv = createShadeVisual(this.textures);
       this.shadePool.push(sv);
-      this.scene.add(sv.root);
+      this.scene.add(sv.root, sv.drainBeam);
     }
 
-    // Drifters pool (max 2)
     for (let i = 0; i < 2; i++) {
-      const dv = createDrifterVisual();
+      const dv = createDrifterVisual(this.textures);
       this.drifterPool.push(dv);
       this.scene.add(dv.root);
     }
 
-    // Charms pool (max 2)
     for (let i = 0; i < 2; i++) {
-      const cv = createCharmVisual();
+      const cv = createCharmVisual(this.textures);
       this.charmPool.push(cv);
       this.scene.add(cv);
     }
 
-    // Pulse Shockwave VFX
     this.pulseVfx = createPulseVfx();
     this.scene.add(this.pulseVfx.ring, this.pulseVfx.dome);
+
+    this.particleSystem = new ParticleBurstSystem(this.textures.glowSpriteMap, 240);
+    this.scene.add(this.particleSystem.points);
   }
 
   private disposeLevelGroup(): void {
@@ -432,32 +819,48 @@ class GameView {
         obj.geometry?.dispose();
         if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
         else obj.material?.dispose();
+      } else if (obj instanceof THREE.Sprite) {
+        obj.material?.dispose();
       }
     });
     this.levelGroup.clear();
     this.lanternVisuals = [];
     this.jumpPadRings = [];
     this.bellMesh = null;
+    this.boatGroup = null;
+    this.floatingRocks = [];
+    this.swayFoliageGroups = [];
   }
 
-  private buildNightGeometry(night: number): void {
+  private buildNightGeometry(night: number, benchCleanMode: boolean): void {
     this.disposeLevelGroup();
-    const grassMat = new THREE.MeshStandardMaterial({ color: COLORS.grass, roughness: 0.88 });
-    const woodMat = new THREE.MeshStandardMaterial({ color: COLORS.wood, roughness: 0.84 });
-    const sandMat = new THREE.MeshStandardMaterial({ color: COLORS.sand, roughness: 0.9 });
+    const grassMat = new THREE.MeshStandardMaterial({
+      map: this.textures.grassMap,
+      bumpMap: this.textures.grassBump,
+      bumpScale: 0.08,
+      roughness: 0.9
+    });
+    const woodMat = new THREE.MeshStandardMaterial({
+      map: this.textures.woodMap,
+      bumpMap: this.textures.woodBump,
+      bumpScale: 0.07,
+      roughness: 0.84
+    });
+    const sandMat = new THREE.MeshStandardMaterial({
+      map: this.textures.sandMap,
+      roughness: 0.92
+    });
 
     const addIslandDisc = (cx: number, cz: number, radius: number) => {
-      // Grass surface
-      const top = new THREE.Mesh(new THREE.CylinderGeometry(radius - 1.2, radius, 0.8, 48), grassMat);
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(radius - 1.2, radius, 0.8, 56), grassMat);
       top.position.set(cx, -0.4, cz);
       top.receiveShadow = true;
       top.matrixAutoUpdate = false;
       top.updateMatrix();
       this.levelGroup.add(top);
 
-      // Sandy rim & rocky underside cliff
-      const rim = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius - 4, 4.5, 48), sandMat);
-      rim.position.set(cx, -2.65, cz);
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius - 4.5, 4.6, 56), sandMat);
+      rim.position.set(cx, -2.7, cz);
       rim.receiveShadow = true;
       rim.matrixAutoUpdate = false;
       rim.updateMatrix();
@@ -469,8 +872,6 @@ class GameView {
     } else if (night === 2) {
       addIslandDisc(0, 0, 28);
       addIslandDisc(70, 0, 28);
-
-      // Detailed Bamboo Bridge (planks + side beams)
       for (let x = 26.4; x <= 43.6; x += 0.9) {
         const plank = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.22, 4.0), woodMat);
         plank.position.set(x, -0.11, 0);
@@ -488,8 +889,6 @@ class GameView {
       }
     } else if (night === 3) {
       addIslandDisc(0, 0, 45);
-
-      // Tier 1: Half-ring R=12..24, z > 0, Y=3
       const shape = new THREE.Shape();
       shape.absarc(0, 0, 24, 0, Math.PI, false);
       shape.absarc(0, 0, 12, Math.PI, 0, true);
@@ -502,39 +901,42 @@ class GameView {
       tier1.updateMatrix();
       this.levelGroup.add(tier1);
 
-      // Tier 2: Central disk R=8, Y=6
-      const tier2 = new THREE.Mesh(new THREE.CylinderGeometry(8, 8.4, 6, 32), sandMat);
+      const tier2 = new THREE.Mesh(new THREE.CylinderGeometry(8, 8.4, 6, 36), sandMat);
       tier2.position.set(0, 3, 0);
       tier2.receiveShadow = true;
       tier2.matrixAutoUpdate = false;
       tier2.updateMatrix();
       this.levelGroup.add(tier2);
 
-      // Ornate Bell Tower on Tier 2
-      const tower = new THREE.Mesh(new THREE.CylinderGeometry(2, 2.1, 7.5, 16), woodMat);
-      tower.position.set(0, 9.75, 0);
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(2, 2.15, 7.6, 16), woodMat);
+      tower.position.set(0, 9.8, 0);
       tower.castShadow = true;
       tower.matrixAutoUpdate = false;
       tower.updateMatrix();
       this.levelGroup.add(tower);
 
-      const towerRoof = new THREE.Mesh(new THREE.ConeGeometry(3.4, 2.2, 8), woodMat);
-      towerRoof.position.set(0, 14.4, 0);
+      const eavePts = [
+        new THREE.Vector2(0.01, 2.2),
+        new THREE.Vector2(1.2, 1.2),
+        new THREE.Vector2(2.8, 0.3),
+        new THREE.Vector2(3.7, 0.0),
+        new THREE.Vector2(3.9, 0.25)
+      ];
+      const towerRoof = new THREE.Mesh(new THREE.LatheGeometry(eavePts, 8), woodMat);
+      towerRoof.position.set(0, 13.4, 0);
       towerRoof.castShadow = true;
       towerRoof.matrixAutoUpdate = false;
       towerRoof.updateMatrix();
       this.levelGroup.add(towerRoof);
 
-      // Gently swaying golden bell inside tower
       const bell = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.45, 0.8, 1.3, 12),
-        new THREE.MeshStandardMaterial({ color: COLORS.gold, metalness: 0.65, roughness: 0.3 })
+        new THREE.CylinderGeometry(0.48, 0.85, 1.35, 14),
+        new THREE.MeshStandardMaterial({ color: COLORS.gold, metalness: 0.68, roughness: 0.28 })
       );
       bell.position.set(0, 11.2, 0);
       this.bellMesh = bell;
       this.levelGroup.add(bell);
 
-      // 2 Ramps at 30 deg & 150 deg
       for (const deg of [30, 150]) {
         const rad = (deg * Math.PI) / 180;
         const ramp = new THREE.Mesh(new THREE.BoxGeometry(6.7, 0.4, 3), woodMat);
@@ -548,19 +950,19 @@ class GameView {
       }
     }
 
-    // Animated Jump Pads
     const padBaseMat = new THREE.MeshStandardMaterial({
       color: COLORS.gold,
       emissive: COLORS.lanternLit,
-      emissiveIntensity: 0.7
+      emissiveIntensity: 0.9
     });
     const padRingMat = new THREE.MeshBasicMaterial({
       color: COLORS.lanternCore,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.75
+      opacity: 0.8
     });
-    const avoidList: Array<[number, number, number]> = this.engine.lanterns.map(l => l.pos);
+    const lanternPositions = this.engine.lanterns.map(l => l.pos);
+    const avoidList: Array<[number, number, number]> = [...lanternPositions];
     for (const pad of getJumpPads(night)) {
       avoidList.push(pad.pos);
       const padMesh = new THREE.Mesh(new THREE.CylinderGeometry(pad.radius, pad.radius * 1.15, 0.24, 20), padBaseMat);
@@ -577,46 +979,79 @@ class GameView {
       this.levelGroup.add(ring);
     }
 
-    // Detailed Pagoda Lanterns
     for (const lantern of this.engine.lanterns) {
-      const lv = createLanternVisual(lantern.pos);
+      const lv = createLanternVisual(lantern.pos, this.textures);
       this.lanternVisuals.push(lv);
       this.levelGroup.add(lv.group);
     }
 
-    // Decorative Trees & Mossy Rocks (InstancedMesh)
-    addIslandDecorations(this.levelGroup, night, avoidList);
+    // Ticket-04: Disable extra creative decorations in benchmark mode so benchmark measures standard scene cleanly
+    if (!benchCleanMode) {
+      const decor = addIslandDecorations(this.levelGroup, night, avoidList, lanternPositions, this.textures);
+      this.boatGroup = decor.boatGroup;
+      this.floatingRocks = decor.floatingRocks;
+      this.swayFoliageGroups = decor.swayFoliageGroups;
+    }
   }
 
   private setupControls(): void {
     window.addEventListener('keydown', e => {
+      // Ignore shortcuts while typing player name in leaderboard input
+      if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+
       const k = e.key.toLowerCase();
-      if (k === 'escape' || k === 'p') {
+
+      // Keybind Remapping capture
+      if (this.listeningAction) {
+        e.preventDefault();
+        const warnEl = document.getElementById('keybind-warn')!;
+        const conflict = (Object.keys(this.keybinds) as ActionKey[]).find(
+          act => act !== this.listeningAction && this.keybinds[act] === k
+        );
+        if (conflict) {
+          warnEl.innerText = `⚠ Phím "${formatKeyLabel(k)}" đã trùng với "${ACTION_LABELS[conflict]}"! Hãy chọn phím khác.`;
+          return;
+        }
+        this.keybinds[this.listeningAction] = k;
+        localStorage.setItem('ddl_keybinds', JSON.stringify(this.keybinds));
+        warnEl.innerText = `✔ Đã gán "${formatKeyLabel(k)}" cho "${ACTION_LABELS[this.listeningAction]}".`;
+        this.listeningAction = null;
+        this.renderKeybindSettings();
+        this.updateControlsHint();
+        return;
+      }
+
+      if (k === this.keybinds.pause || (this.keybinds.pause === 'escape' && k === 'p')) {
         this.togglePause();
         return;
       }
       this.keyState[k] = true;
-      if (k === ' ') this.pendingJump = true;
-      if (k === 'shift' || k === 'j') this.pendingDash = true;
-      if (k === 'e') this.pendingInteract = true;
-      if (k === 'f') this.pendingPulse = true;
+      if (k === this.keybinds.jump) this.pendingJump = true;
+      if (k === this.keybinds.dash || (this.keybinds.dash === 'shift' && k === 'j')) this.pendingDash = true;
+      if (k === this.keybinds.interact) this.pendingInteract = true;
+      if (k === this.keybinds.pulse) this.pendingPulse = true;
     });
 
     window.addEventListener('keyup', e => {
       const k = e.key.toLowerCase();
       this.keyState[k] = false;
-      if (k === ' ') this.pendingJump = false;
-      if (k === 'shift' || k === 'j') this.pendingDash = false;
-      if (k === 'e') this.pendingInteract = false;
-      if (k === 'f') this.pendingPulse = false;
+      if (k === this.keybinds.jump) this.pendingJump = false;
+      if (k === this.keybinds.dash || (this.keybinds.dash === 'shift' && k === 'j')) this.pendingDash = false;
+      if (k === this.keybinds.interact) this.pendingInteract = false;
+      if (k === this.keybinds.pulse) this.pendingPulse = false;
     });
   }
 
   private onWindowResize(): void {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    if (this.isBenchMode) return;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.composer.setSize(w, h);
+    this.bloomPass.resolution.set(w, h);
   }
 
   private updateHUD(): void {
@@ -636,11 +1071,46 @@ class GameView {
     if (timeLeft <= 10 && timeLeft > 0 && timeLeft !== this.lastCountdownSec && this.engine.state === 'playing') {
       this.lastCountdownSec = timeLeft;
       soundFx.playCountdownTick();
+      if (timeLeft === 10) this.showCaption('⚠ Chỉ còn 10 giây tới bình minh!', 2.5);
+    }
+
+    // Wind incoming 2s warning (Night 3)
+    if (this.currentNight === 3 && !this.engine.wind.active && this.engine.wind.timerTicks >= 1680) {
+      if (!this.windWarnedCycle) {
+        this.windWarnedCycle = true;
+        this.showCaption('⚠ Gió mạnh sắp thổi trong 2 giây!', 2.5);
+      }
+    } else if (this.engine.wind.active) {
+      this.windWarnedCycle = false;
+    }
+
+    // Low fuel (< 30) caption alert
+    for (const l of this.engine.lanterns) {
+      const fuel = this.engine.getLanternFuel(l);
+      if (l.lit && fuel < this.engine.tuning.low_fuel_threshold) {
+        if (!this.lowFuelWarnedIds.has(l.id)) {
+          this.lowFuelWarnedIds.add(l.id);
+          this.showCaption(`⚠ Đèn ${l.id} sắp cạn dầu (${Math.round(fuel)}/100)!`, 3.0);
+        }
+      } else {
+        this.lowFuelWarnedIds.delete(l.id);
+      }
+    }
+
+    // Shade spawn edge arrow indicator
+    if (this.shadeAlertTimer > 0 && this.lastAlertedShadePos) {
+      const dx = this.lastAlertedShadePos[0] - this.engine.player.pos[0];
+      const dz = this.lastAlertedShadePos[2] - this.engine.player.pos[2];
+      const dirText = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? '← Trái' : '→ Phải') : (dz > 0 ? '↑ Trước' : '↓ Sau');
+      this.shadeArrowUI.style.display = 'block';
+      this.shadeArrowUI.innerText = `⚠ Bóng Mực xuất hiện (${dirText})`;
+    } else {
+      this.shadeArrowUI.style.display = 'none';
     }
 
     const litCount = this.engine.lanterns.filter(l => l.lit).length;
     const reqCount = Math.ceil(this.engine.tuning.win_ratio * this.engine.lanterns.length);
-    this.lanternCountUI.innerText = `${litCount} / ${this.engine.lanterns.length} (cần ≥${reqCount})`;
+    this.lanternCountUI.innerText = `${litCount} / ${this.engine.lanterns.length} (≥${reqCount})`;
     this.scoreDisplayUI.innerText = `${this.engine.score}`;
 
     this.capacityLabelUI.innerText = `${this.engine.player.carried} / ${this.engine.player.capacity}`;
@@ -664,13 +1134,14 @@ class GameView {
       }
     }
     if (nearActionLantern) {
+      const keyName = formatKeyLabel(this.keybinds.interact);
       this.interactPromptUI.style.display = 'block';
       if (nearActionLantern.lit) {
         const f = Math.round(this.engine.getLanternFuel(nearActionLantern));
-        this.interactPromptUI.innerText = `E — Châm dầu (${f}/100)`;
+        this.interactPromptUI.innerText = `${keyName} — Châm dầu (${f}/100)`;
       } else {
         const cost = nearActionLantern.ever_lit ? this.engine.tuning.relight_cost : this.engine.tuning.lantern_cost;
-        this.interactPromptUI.innerText = `E — Nạp ánh sáng (${nearActionLantern.deposited}/${cost})`;
+        this.interactPromptUI.innerText = `${keyName} — Nạp ánh sáng (${nearActionLantern.deposited}/${cost})`;
       }
     } else {
       this.interactPromptUI.style.display = 'none';
@@ -723,46 +1194,183 @@ class GameView {
       this.pulseCdUI.innerText = 'Sẵn sàng';
     }
 
+    // End Screen Modal + Leaderboard Save prompt (on Night 3 Win OR any Lose)
     if ((this.engine.state === 'won' || this.engine.state === 'lost') && !this.modalOverlay.classList.contains('active')) {
       this.modalOverlay.classList.add('active');
       const titleEl = document.getElementById('modal-title')!;
       const descEl = document.getElementById('modal-desc')!;
       const nextBtn = document.getElementById('btn-next-night')!;
+      const saveSec = document.getElementById('save-score-section')!;
+      const saveMsg = document.getElementById('save-score-msg')!;
+      saveMsg.innerText = '';
 
       if (this.engine.state === 'won') {
         soundFx.playWin();
         this.totalCampaignScore += this.engine.score;
+        this.nightsWonCount = Math.min(3, Math.max(this.nightsWonCount, this.currentNight));
         if (this.currentNight < 3) {
           titleEl.innerText = `HOÀN THÀNH ĐÊM ${this.currentNight}!`;
           titleEl.style.color = '#F2C14E';
-          descEl.innerText = `Điểm Đêm ${this.currentNight}: ${this.engine.score} · Tổng điểm hành trình: ${this.totalCampaignScore}`;
+          descEl.innerText = `Điểm Đêm ${this.currentNight}: ${this.engine.score} · Tổng điểm: ${this.totalCampaignScore}`;
           nextBtn.style.display = 'inline-block';
+          saveSec.style.display = 'none';
         } else {
           titleEl.innerText = 'BÌNH MINH ĐÃ ĐẾN!';
           titleEl.style.color = '#FFE9B0';
-          descEl.innerText = `Bạn đã thắp sáng toàn bộ Ba Hòn Đảo! Tổng điểm chiến dịch: ${this.totalCampaignScore}`;
+          descEl.innerText = `Bạn đã giữ sáng Ba Hòn Đảo tới bình minh! Tổng điểm: ${this.totalCampaignScore}`;
           nextBtn.style.display = 'none';
+          saveSec.style.display = 'block';
         }
       } else {
         soundFx.playLose();
         titleEl.innerText = 'ĐÊM TỐI BAO PHỦ';
-        titleEl.style.color = '#FF5A5F';
-        descEl.innerText = `Thử lại Đêm ${this.currentNight} để giữ ngọn lửa cho hòn đảo. Điểm hiện tại: ${this.engine.score}`;
+        titleEl.style.color = this.colorblindMode ? '#FFFFFF' : '#FF5A5F';
+        descEl.innerText = `Thử lại Đêm ${this.currentNight}. Tổng điểm các Đêm đã thắng: ${this.totalCampaignScore}`;
         nextBtn.style.display = 'none';
+        saveSec.style.display = 'block';
       }
     }
+  }
+
+  private finishBenchmark(): void {
+    if (this.benchFinished) return;
+    this.benchFinished = true;
+
+    const dts = this.benchFrameDts;
+    const n = Math.max(1, dts.length);
+    const sumDt = dts.reduce((a, b) => a + b, 0);
+    const avgFps = Math.round((1000 * n / Math.max(1, sumDt)) * 10) / 10;
+
+    const sortedDesc = [...dts].sort((a, b) => b - a);
+    const k = Math.max(1, Math.ceil(0.01 * n));
+    const topKAvg = sortedDesc.slice(0, k).reduce((a, b) => a + b, 0) / k;
+    const p1LowFps = Math.round((1000 / Math.max(0.1, topKAvg)) * 10) / 10;
+
+    const sortedAsc = [...dts].sort((a, b) => a - b);
+    const p95Idx = Math.min(n - 1, Math.floor(0.95 * n));
+    const frameMsP95 = Math.round(sortedAsc[p95Idx] * 100) / 100;
+
+    const gl = this.renderer.getContext();
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    const gpuStr = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : 'WebGL2';
+    const perfMem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+    const peakMemMb = perfMem ? Math.round((perfMem.usedJSHeapSize / (1024 * 1024)) * 10) / 10 : null;
+
+    const payload = {
+      contract_version: '1.3',
+      avg_fps: avgFps,
+      p1_low_fps: p1LowFps,
+      frame_ms_p95: frameMsP95,
+      frames: n,
+      load_ms: Math.round(this.benchFirstFrameMs),
+      peak_mem_mb: peakMemMb,
+      vsync_off: true,
+      renderer: `Three.js 0.160.1 WebGLRenderer (${gpuStr})`,
+      diag_top5_ms: sortedDesc.slice(0, 5).map(x => Math.round(x * 10) / 10)
+    };
+
+    this.benchBannerUI.textContent = `BENCHMARK DONE · avg=${avgFps} FPS · p1_low=${p1LowFps} FPS · p95=${frameMsP95}ms`;
+    fetch('/__bench_result', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(() => {});
   }
 
   private startLoop(): void {
     let lastTime = performance.now();
     let accumulatedTime = 0;
     const fixedStep = 1000 / 60;
+    let lastBenchBannerSec = -1;
 
     const animate = (currentTime: number) => {
       requestAnimationFrame(animate);
 
-      const delta = Math.min((currentTime - lastTime) / 1000, 0.1);
+      const dtMs = Math.max(0.1, currentTime - lastTime);
+      const delta = Math.min(dtMs / 1000, 0.1);
       lastTime = currentTime;
+
+      if (this.isBenchMode) {
+        if (this.benchFirstFrameMs === 0) {
+          this.benchFirstFrameMs = this.benchProcessT0 > 0 ? Math.max(1, Date.now() - this.benchProcessT0) : currentTime;
+          this.benchStartWallMs = currentTime;
+        }
+        const elapsedSec = (currentTime - this.benchStartWallMs) / 1000;
+        const warmupSec = 3.0;
+
+        // Orbit camera R=30m, Y=15m, starting (30,15,0), CCW from above, 15s/rev
+        const orbitAngle = (elapsedSec / 15.0) * Math.PI * 2;
+        this.camera.position.set(Math.cos(orbitAngle) * 30, 15, -Math.sin(orbitAngle) * 30);
+        this.camera.lookAt(0, 0, 0);
+
+        // Move 200 wandering Shades smoothly while respecting R<=38m and L1-L3 6m safe zones (zero-allocation)
+        const lanterns = this.engine.lanterns;
+        const litCountLimit = Math.min(3, lanterns.length);
+        if (this.benchShadesInstanced) {
+          for (let i = 0; i < this.benchShadePos.length; i++) {
+            const sp = this.benchShadePos[i];
+            let nx = sp.x + sp.vx * delta;
+            let nz = sp.z + sp.vz * delta;
+            if (nx * nx + nz * nz > 38 * 38) {
+              sp.vx = -sp.vx;
+              sp.vz = -sp.vz;
+              nx = sp.x;
+              nz = sp.z;
+            }
+            for (let li = 0; li < litCountLimit; li++) {
+              const l = lanterns[li];
+              const dx = nx - l.pos[0];
+              const dz = nz - l.pos[2];
+              if (dx * dx + dz * dz < 36) {
+                sp.vx = -sp.vx;
+                sp.vz = -sp.vz;
+                nx = sp.x;
+                nz = sp.z;
+                break;
+              }
+            }
+            sp.x = nx;
+            sp.z = nz;
+            _scratchVec.set(sp.x, 0.95 + Math.sin(elapsedSec * 3 + i) * 0.15, sp.z);
+            _scratchScale.set(1, 1, 1);
+            _scratchMatrix.compose(_scratchVec, _scratchQuat, _scratchScale);
+            this.benchShadesInstanced.setMatrixAt(i, _scratchMatrix);
+          }
+          this.benchShadesInstanced.instanceMatrix.needsUpdate = true;
+        }
+
+        // Render standard Night 1 scene with full lighting/shadows (creative Bloom post-process disabled in bench per Ticket-04)
+        this.updateVisuals(delta);
+        this.renderer.render(this.scene, this.camera);
+
+        if (!this.benchFinished) {
+          const secInt = Math.floor(elapsedSec);
+          if (elapsedSec < warmupSec) {
+            if (secInt !== lastBenchBannerSec) {
+              lastBenchBannerSec = secInt;
+              this.benchBannerUI.textContent = `BENCHMARK Warmup: ${Math.ceil(warmupSec - elapsedSec)}s...`;
+            }
+          } else if (elapsedSec < warmupSec + this.benchDurationSec) {
+            this.benchFrameDts.push(dtMs);
+            if (secInt !== lastBenchBannerSec) {
+              lastBenchBannerSec = secInt;
+              const rem = Math.ceil(warmupSec + this.benchDurationSec - elapsedSec);
+              this.benchBannerUI.textContent = `BENCHMARK Measuring (${this.benchFrameDts.length} frames · ${rem}s left)`;
+            }
+          } else {
+            this.finishBenchmark();
+          }
+        }
+        return;
+      }
+
+      if (this.captionTimer > 0) {
+        this.captionTimer -= delta;
+        if (this.captionTimer <= 0) this.captionBarUI.style.display = 'none';
+      }
+      if (this.shadeAlertTimer > 0) {
+        this.shadeAlertTimer -= delta;
+      }
 
       if (this.isInGame && this.engine.state === 'playing') {
         accumulatedTime += delta * 1000;
@@ -771,11 +1379,12 @@ class GameView {
 
           let moveX = 0;
           let moveZ = 0;
-          if (this.keyState['w'] || this.keyState['arrowup']) moveZ += 1;
-          if (this.keyState['s'] || this.keyState['arrowdown']) moveZ -= 1;
-          // Camera looks along +Z in right-handed Three.js space: +X is screen-left, -X is screen-right
-          if (this.keyState['a'] || this.keyState['arrowleft']) moveX += 1;
-          if (this.keyState['d'] || this.keyState['arrowright']) moveX -= 1;
+          const kb = this.keybinds;
+          if (this.keyState[kb.up] || this.keyState['arrowup']) moveZ += 1;
+          if (this.keyState[kb.down] || this.keyState['arrowdown']) moveZ -= 1;
+          // Camera looks along +Z: +X is screen-left, -X is screen-right
+          if (this.keyState[kb.left] || this.keyState['arrowleft']) moveX += 1;
+          if (this.keyState[kb.right] || this.keyState['arrowright']) moveX -= 1;
 
           const wasGrounded = this.engine.player.grounded;
           const events = this.engine.step({
@@ -788,28 +1397,62 @@ class GameView {
             pulse: this.pendingPulse
           });
 
+          const p = this.engine.player.pos;
           if (wasGrounded && !this.engine.player.grounded && this.engine.player.vel[1] > 0) {
             soundFx.playJump();
+            if (!this.reduceMotion) this.particleSystem.emit(p[0], p[1] + 0.1, p[2], 8, 0.85, 0.8, 0.65, 2.2, 1.4, 0.45);
           }
           if (!wasGrounded && this.engine.player.grounded) {
-            this.landingSquash = 1.0; // Trigger subtle landing squash
+            this.landingSquash = this.reduceMotion ? 0 : 1.0;
+            if (!this.reduceMotion) this.particleSystem.emit(p[0], p[1] + 0.1, p[2], 10, 0.8, 0.72, 0.56, 2.5, 1.2, 0.45);
           }
           for (const ev of events) {
-            if (ev.name === 'mote_picked') soundFx.playMotePickup();
-            else if (ev.name === 'lantern_lit') soundFx.playLanternLit();
-            else if (ev.name === 'pulse') {
+            if (ev.name === 'mote_picked') {
+              soundFx.playMotePickup();
+              if (!this.reduceMotion) this.particleSystem.emit(p[0], p[1] + 0.9, p[2], 12, 1.0, 0.94, 0.65, 2.8, 3.2, 0.55);
+            } else if (ev.name === 'deposit' || ev.name === 'refuel') {
+              soundFx.playMotePickup();
+              this.interactAnimTimer = 0.28;
+              const lid = ev.data.lantern_id as string;
+              const l = this.engine.lanterns.find(x => x.id === lid);
+              if (l && !this.reduceMotion) this.particleSystem.emit(l.pos[0], l.pos[1] + 3.6, l.pos[2], 14, 1.0, 0.72, 0.28, 3.2, 3.5, 0.65);
+            } else if (ev.name === 'lantern_lit') {
+              soundFx.playLanternLit();
+              this.interactAnimTimer = 0.36;
+              const lid = ev.data.lantern_id as string;
+              const l = this.engine.lanterns.find(x => x.id === lid);
+              if (l && !this.reduceMotion) this.particleSystem.emit(l.pos[0], l.pos[1] + 4.0, l.pos[2], 28, 1.0, 0.85, 0.45, 5.2, 4.5, 0.9);
+            } else if (ev.name === 'pulse') {
               soundFx.playPulse();
+              this.pulseAnimTimer = 0.38;
               this.triggerPulseVfx();
-            } else if (ev.name === 'dash') soundFx.playDash();
-            else if (ev.name === 'player_hit') soundFx.playHurt();
-            else if (ev.name === 'shade_spawned') soundFx.playShadeSpawn();
+              if (!this.reduceMotion) this.particleSystem.emit(p[0], p[1] + 0.8, p[2], 24, 1.0, 0.78, 0.32, 6.5, 2.2, 0.65);
+            } else if (ev.name === 'dash') {
+              soundFx.playDash();
+              if (!this.reduceMotion) this.particleSystem.emit(p[0], p[1] + 0.7, p[2], 14, 0.95, 0.76, 0.3, 4.2, 1.6, 0.45);
+            } else if (ev.name === 'charm_picked') {
+              soundFx.playLanternLit();
+              if (!this.reduceMotion) this.particleSystem.emit(p[0], p[1] + 1.0, p[2], 22, 0.9, 0.15, 0.2, 4.5, 3.8, 0.75);
+            } else if (ev.name === 'player_hit') {
+              soundFx.playHurt();
+              if (!this.reduceMotion) this.particleSystem.emit(p[0], p[1] + 0.9, p[2], 18, 0.65, 0.25, 1.0, 4.5, 2.8, 0.65);
+            } else if (ev.name === 'shade_spawned') {
+              soundFx.playShadeSpawn();
+              const sid = ev.data.id as string;
+              const sh = this.engine.shades.find(x => x.id === sid);
+              if (sh) {
+                this.lastAlertedShadePos = [...sh.pos];
+                this.shadeAlertTimer = 3.5;
+              }
+              this.showCaption('⚠ Bóng Mực vừa xuất hiện trong sương!', 3.0);
+            }
           }
         }
       }
 
       this.updateVisuals(delta);
       this.updateHUD();
-      this.renderer.render(this.scene, this.camera);
+      this.composer.render();
     };
 
     requestAnimationFrame(animate);
@@ -822,91 +1465,145 @@ class GameView {
     this.pulseVfx.ring.position.set(p[0], p[1] + 0.15, p[2]);
     this.pulseVfx.dome.position.set(p[0], p[1] + 0.8, p[2]);
     this.pulseVfx.ring.visible = true;
-    this.pulseVfx.dome.visible = true;
+    this.pulseVfx.dome.visible = !this.reduceMotion;
   }
 
   private updateVisuals(dt: number): void {
     const time = performance.now() * 0.001;
     const p = this.engine.player;
 
-    // 1. Dynamic Ambient Light per PRD-1: 0.15 + 0.55 * (lit / total)
-    const litCount = this.engine.lanterns.filter(l => l.lit).length;
-    const totalLanterns = Math.max(1, this.engine.lanterns.length);
-    this.ambientLight.intensity = 0.15 + 0.55 * (litCount / totalLanterns);
+    let litCount = 0;
+    for (let i = 0; i < this.engine.lanterns.length; i++) {
+      if (this.engine.lanterns[i].lit) litCount++;
+    }
+    const litRatio = litCount / Math.max(1, this.engine.lanterns.length);
+    this.ambientLight.intensity = 0.15 + 0.55 * litRatio;
+    this.skyDome.uniforms.uLitRatio.value = litRatio;
+    this.skyDome.uniforms.uTime.value = time;
+    this.cloudSea.uniforms.uTime.value = time;
+    this.particleSystem.update(dt);
+    if (!this.isBenchMode) this.ambientDust.rotation.y = time * 0.025;
 
-    // 2. Articulated Mây Animations (Run, Jump, Dash, Idle, Facing Rotation, Invuln Flash)
+    // Articulated Mây Animations
     this.playerRig.root.position.set(p.pos[0], p.pos[1], p.pos[2]);
     const horizSpeed = Math.sqrt(p.vel[0] * p.vel[0] + p.vel[2] * p.vel[2]);
 
+    let targetBank = 0;
     if (horizSpeed > 0.25) {
       const targetYaw = Math.atan2(p.vel[0], p.vel[2]);
       let diff = targetYaw - this.playerYaw;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
+      targetBank = this.reduceMotion ? 0 : Math.max(-0.22, Math.min(0.22, -diff * 0.45));
       this.playerYaw += diff * Math.min(1, dt * 14);
     }
+    this.bankAngle += (targetBank - this.bankAngle) * Math.min(1, dt * 10);
     this.playerRig.root.rotation.y = this.playerYaw;
-
-    // Invulnerability blink
-    this.playerRig.bodyGroup.visible = p.invulnTicks <= 0 || Math.floor(time * 16) % 2 === 0;
-
-    // Landing squash decay
+    this.playerRig.bodyGroup.rotation.z = this.bankAngle;
+    this.playerRig.bodyGroup.visible = p.invulnTicks <= 0 || this.reduceMotion || Math.floor(time * 16) % 2 === 0;
     if (this.landingSquash > 0) this.landingSquash = Math.max(0, this.landingSquash - dt * 5);
+    if (this.interactAnimTimer > 0) this.interactAnimTimer = Math.max(0, this.interactAnimTimer - dt);
+    if (this.pulseAnimTimer > 0) this.pulseAnimTimer = Math.max(0, this.pulseAnimTimer - dt);
+
+    // Contact Ground Shadow
+    const groundY = getGroundHeight(p.pos[0], p.pos[2], this.currentNight, p.pos[1]);
+    if (groundY > -100) {
+      const hAbove = Math.max(0, p.pos[1] - groundY);
+      this.playerRig.groundShadow.visible = true;
+      this.playerRig.groundShadow.position.set(p.pos[0], groundY + 0.04, p.pos[2]);
+      this.playerRig.groundShadow.scale.setScalar(Math.max(0.32, 1.0 - hAbove * 0.09));
+      (this.playerRig.groundShadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0.1, 0.46 - hAbove * 0.045);
+    } else {
+      this.playerRig.groundShadow.visible = false;
+    }
 
     const isDashing = p.dashTicks > 0;
     if (isDashing) {
-      this.playerRig.bodyGroup.rotation.x = 0.42;
-      this.playerRig.bodyGroup.scale.set(0.92, 0.96, 1.15);
-      this.playerRig.leftArm.rotation.x = 0.9;
-      this.playerRig.rightArm.rotation.x = 0.9;
-      this.playerRig.dashRing.visible = true;
-      this.playerRig.dashRing.rotation.z = time * 10;
+      this.playerRig.bodyGroup.rotation.x = 0.46;
+      this.playerRig.bodyGroup.scale.set(0.9, 0.95, 1.18);
+      this.playerRig.leftArm.rotation.x = 0.95;
+      this.playerRig.rightArm.rotation.x = 0.95;
+      this.playerRig.leftLeg.rotation.x = 0.55;
+      this.playerRig.rightLeg.rotation.x = -0.35;
+      this.playerRig.dashRings.forEach((r, ri) => {
+        r.visible = !this.reduceMotion;
+        r.rotation.z = time * (11 + ri * 3);
+      });
     } else if (!p.grounded) {
-      // Airborne pose
       this.playerRig.bodyGroup.rotation.x = 0.1;
-      const stretch = 1 + Math.max(-0.08, Math.min(0.12, p.vel[1] * 0.014));
+      const stretch = 1 + Math.max(-0.08, Math.min(0.14, p.vel[1] * 0.015));
       this.playerRig.bodyGroup.scale.set(1 / Math.sqrt(stretch), stretch, 1 / Math.sqrt(stretch));
-      this.playerRig.leftArm.rotation.x = -0.7;
-      this.playerRig.rightArm.rotation.x = -0.7;
-      this.playerRig.leftLeg.rotation.x = 0.35;
-      this.playerRig.rightLeg.rotation.x = -0.25;
-      this.playerRig.dashRing.visible = false;
+      this.playerRig.leftArm.rotation.x = -0.75;
+      this.playerRig.rightArm.rotation.x = -0.75;
+      this.playerRig.leftLeg.rotation.x = 0.38;
+      this.playerRig.rightLeg.rotation.x = -0.28;
+      this.playerRig.dashRings.forEach(r => (r.visible = false));
     } else if (horizSpeed > 0.3) {
-      // Running cycle
-      this.runCycle += dt * horizSpeed * 1.9;
+      this.runCycle += dt * horizSpeed * 1.95;
+      const stepIdx = Math.floor(this.runCycle / Math.PI);
+      if (stepIdx !== this.lastFootstepIndex) {
+        this.lastFootstepIndex = stepIdx;
+        if (!this.reduceMotion && !this.isBenchMode) {
+          this.particleSystem.emit(p.pos[0], p.pos[1] + 0.08, p.pos[2], 3, 0.78, 0.72, 0.56, 1.2, 0.9, 0.32);
+        }
+      }
       const swing = Math.sin(this.runCycle);
-      this.playerRig.leftLeg.rotation.x = swing * 0.65;
-      this.playerRig.rightLeg.rotation.x = -swing * 0.65;
-      this.playerRig.leftArm.rotation.x = -swing * 0.55;
-      this.playerRig.rightArm.rotation.x = swing * 0.55;
-      this.playerRig.bodyGroup.position.y = Math.abs(Math.cos(this.runCycle)) * 0.09;
-      this.playerRig.bodyGroup.rotation.x = 0.12;
-      this.playerRig.bodyGroup.scale.set(1 + this.landingSquash * 0.12, 1 - this.landingSquash * 0.14, 1 + this.landingSquash * 0.12);
-      this.playerRig.dashRing.visible = false;
+      this.playerRig.leftLeg.rotation.x = swing * 0.72;
+      this.playerRig.rightLeg.rotation.x = -swing * 0.72;
+      this.playerRig.leftArm.rotation.x = -swing * 0.6;
+      this.playerRig.rightArm.rotation.x = swing * 0.6;
+      this.playerRig.bodyGroup.position.y = Math.abs(Math.cos(this.runCycle)) * 0.1;
+      this.playerRig.bodyGroup.rotation.x = 0.14;
+      this.playerRig.bodyGroup.scale.set(1 + this.landingSquash * 0.14, 1 - this.landingSquash * 0.16, 1 + this.landingSquash * 0.14);
+      this.playerRig.dashRings.forEach(r => (r.visible = false));
     } else {
-      // Idle breathing
-      this.playerRig.leftLeg.rotation.x *= 0.85;
-      this.playerRig.rightLeg.rotation.x *= 0.85;
-      this.playerRig.leftArm.rotation.x = Math.sin(time * 2.2) * 0.06;
-      this.playerRig.rightArm.rotation.x = -Math.sin(time * 2.2) * 0.06;
-      this.playerRig.bodyGroup.position.y = Math.sin(time * 2.5) * 0.03;
-      this.playerRig.bodyGroup.rotation.x *= 0.85;
-      this.playerRig.bodyGroup.scale.set(1 + this.landingSquash * 0.12, 1 - this.landingSquash * 0.14, 1 + this.landingSquash * 0.12);
-      this.playerRig.dashRing.visible = false;
+      this.playerRig.leftLeg.rotation.x *= 0.84;
+      this.playerRig.rightLeg.rotation.x *= 0.84;
+      this.playerRig.leftArm.rotation.x = Math.sin(time * 2.2) * 0.07;
+      this.playerRig.rightArm.rotation.x = -Math.sin(time * 2.2) * 0.07;
+      this.playerRig.bodyGroup.position.y = Math.sin(time * 2.5) * 0.032;
+      this.playerRig.bodyGroup.rotation.x *= 0.84;
+      this.playerRig.bodyGroup.scale.set(1 + this.landingSquash * 0.14, 1 - this.landingSquash * 0.16, 1 + this.landingSquash * 0.14);
+      this.playerRig.dashRings.forEach(r => (r.visible = false));
     }
 
-    // Scarf tails flutter & hanging hat lantern swings
-    const flutter = 0.15 + Math.min(0.6, horizSpeed * 0.06);
-    this.playerRig.scarfTailL.rotation.x = Math.sin(time * 9) * flutter;
-    this.playerRig.scarfTailR.rotation.x = Math.sin(time * 9 + 1.4) * flutter;
-    this.playerRig.miniLanternPivot.rotation.z = Math.sin(time * 3.5 + this.runCycle * 0.5) * (0.12 + horizSpeed * 0.02);
+    if (this.pulseAnimTimer > 0) {
+      const a = Math.sin((this.pulseAnimTimer / 0.38) * Math.PI);
+      this.playerRig.leftArm.rotation.x = -2.4 * a;
+      this.playerRig.rightArm.rotation.x = -2.4 * a;
+      this.playerRig.leftArm.rotation.z = 0.45 * a;
+      this.playerRig.rightArm.rotation.z = -0.45 * a;
+    } else if (this.interactAnimTimer > 0) {
+      const a = Math.sin((this.interactAnimTimer / 0.28) * Math.PI);
+      this.playerRig.leftArm.rotation.x = -1.25 * a;
+      this.playerRig.rightArm.rotation.x = -1.25 * a;
+      this.playerRig.leftArm.rotation.z = 0;
+      this.playerRig.rightArm.rotation.z = 0;
+    } else {
+      this.playerRig.leftArm.rotation.z = 0;
+      this.playerRig.rightArm.rotation.z = 0;
+    }
 
-    // Hat lantern glow scales with carried motes ("Sáng tạo của tôi")
-    const carryRatio = p.carried / this.engine.tuning.carry_capacity;
-    this.playerRig.hatLight.intensity = 0.8 + carryRatio * 3.6 + Math.sin(time * 7) * 0.15;
-    this.playerRig.miniLanternMat.emissiveIntensity = 0.8 + carryRatio * 2.0;
+    const flutter = 0.16 + Math.min(0.52, horizSpeed * 0.055);
+    this.playerRig.scarfSegsL.forEach((seg, si) => {
+      seg.rotation.x = Math.sin(time * 9.5 - si * 1.1) * flutter + (si === 0 ? horizSpeed * 0.04 : 0);
+    });
+    this.playerRig.scarfSegsR.forEach((seg, si) => {
+      seg.rotation.x = Math.sin(time * 9.5 - si * 1.1 + 1.3) * flutter + (si === 0 ? horizSpeed * 0.04 : 0);
+    });
+    this.playerRig.backFlap.rotation.x = 0.08 + Math.min(0.55, horizSpeed * 0.06) + Math.sin(this.runCycle * 2) * 0.06;
+    this.playerRig.hairBraidL.rotation.x = Math.min(0.5, horizSpeed * 0.05) + Math.sin(time * 6) * 0.08;
+    this.playerRig.hairBraidR.rotation.x = Math.min(0.5, horizSpeed * 0.05) + Math.cos(time * 6) * 0.08;
+    this.playerRig.hatGroup.rotation.x = -Math.min(0.14, horizSpeed * 0.012);
+    this.playerRig.miniLanternPivot.rotation.z = Math.sin(time * 3.5 + this.runCycle * 0.5) * (0.14 + horizSpeed * 0.025);
+    this.playerRig.miniLanternPivot.rotation.x = -Math.min(0.35, horizSpeed * 0.035);
 
-    // Wind Charm Aura
+    const carryRatio = this.isBenchMode ? 0 : p.carried / Math.max(1, p.capacity);
+    this.playerRig.hatLight.intensity = 0.9 + carryRatio * 3.8 + (this.reduceMotion ? 0 : Math.sin(time * 7) * 0.15);
+    this.playerRig.miniLanternMat.emissiveIntensity = 1.0 + carryRatio * 2.2;
+    this.playerRig.miniHalo.scale.setScalar(0.95 + carryRatio * 1.15);
+    this.playerRig.pouchMat.emissiveIntensity = 0.1 + carryRatio * 1.6;
+
     if (p.charmTicks > 0) {
       this.playerRig.charmAura.visible = true;
       this.playerRig.charmAura.rotation.z = time * 3.5;
@@ -914,56 +1611,68 @@ class GameView {
       this.playerRig.charmAura.visible = false;
     }
 
-    // 3. Smooth Third-Person Camera Follow
-    _cameraTarget.set(p.pos[0], p.pos[1] + 1.5, p.pos[2]);
-    _scratchVec.set(p.pos[0], p.pos[1] + 9.5, p.pos[2] - 14.2);
-    this.camera.position.lerp(_scratchVec, 0.08);
-    this.camera.lookAt(_cameraTarget);
+    // Smooth Third-Person Camera Follow (skipped in bench mode where orbit camera controls position)
+    if (!this.isBenchMode) {
+      _cameraTarget.set(p.pos[0], p.pos[1] + 1.5, p.pos[2]);
+      _scratchVec.set(p.pos[0], p.pos[1] + 9.5, p.pos[2] - 14.2);
+      this.camera.position.lerp(_scratchVec, this.reduceMotion ? 0.14 : 0.08);
+      this.camera.lookAt(_cameraTarget);
+    }
 
-    // 4. Lanterns Warm Flicker, 3D Fuel Bar, Unlit Deflation/Tears & Safe Zone Ring (Ticket-03)
+    // Lanterns
     this.engine.lanterns.forEach((l, idx) => {
       const lv = this.lanternVisuals[idx];
       if (!lv) return;
       const fuel = this.engine.getLanternFuel(l);
+
+      lv.tassels.forEach((t, ti) => {
+        t.rotation.z = this.reduceMotion ? 0 : Math.sin(time * 2.8 + idx + ti * 0.9) * 0.14;
+      });
+
       if (l.lit) {
         const isLowFuel = fuel < this.engine.tuning.low_fuel_threshold;
-        const blink1Hz = isLowFuel ? (Math.sin(time * Math.PI * 2) > 0 ? 1.0 : 0.25) : 1.0;
-        const flicker = Math.sin(time * 6 + idx * 1.7) * 0.3;
+        const blink1Hz = isLowFuel && !this.reduceMotion ? (Math.sin(time * Math.PI * 2) > 0 ? 1.0 : 0.25) : 1.0;
+        const flicker = this.reduceMotion ? 0 : Math.sin(time * 6 + idx * 1.7) * 0.3;
 
+        if (lv.coreMat.map !== this.textures.lanternLitMap) {
+          lv.coreMat.map = this.textures.lanternLitMap;
+          lv.coreMat.needsUpdate = true;
+        }
         lv.coreMesh.scale.set(1, 1, 1);
         lv.tearGroup.visible = false;
-        lv.coreMat.color.setHex(COLORS.lanternCore);
         lv.coreMat.emissive.setHex(COLORS.lanternLit);
-        lv.coreMat.emissiveIntensity = (1.9 + flicker * 0.4) * blink1Hz;
-        lv.light.intensity = (4.6 + flicker) * blink1Hz;
+        lv.coreMat.emissiveIntensity = (1.6 + flicker * 0.35) * blink1Hz;
+        lv.light.intensity = (4.8 + flicker) * blink1Hz;
+        (lv.glowHalo.material as THREE.SpriteMaterial).opacity = (0.48 + flicker * 0.08) * blink1Hz;
 
-        // Safe zone ring active only when fuel >= 30
         lv.safeRing.visible = !isLowFuel;
         lv.safeRing.rotation.z = time * 0.25;
 
-        // 3D Fuel bar above lantern
-        lv.fuelBarGroup.visible = true;
+        lv.fuelBarGroup.visible = !this.isBenchMode;
         lv.fuelBarGroup.lookAt(this.camera.position);
         const ratio = Math.max(0.02, fuel / this.engine.tuning.fuel_max);
         lv.fuelBarFill.scale.x = ratio;
-        lv.fuelBarFill.position.x = -(1 - ratio) * 0.775;
+        lv.fuelBarFill.position.x = -(1 - ratio) * 0.82;
         lv.fuelBarMat.color.setHex(isLowFuel ? (this.colorblindMode ? 0xffffff : 0xff5a5f) : COLORS.lanternLit);
         lv.fuelBarFill.visible = !isLowFuel || blink1Hz > 0.5;
       } else {
-        // Deflated 20% + visible paper tears when unlit (non-color distinction)
+        if (lv.coreMat.map !== this.textures.lanternTornMap) {
+          lv.coreMat.map = this.textures.lanternTornMap;
+          lv.coreMat.needsUpdate = true;
+        }
         lv.coreMesh.scale.set(1, 0.8, 1);
         lv.tearGroup.visible = true;
         lv.fuelBarGroup.visible = false;
         lv.safeRing.visible = false;
+        (lv.glowHalo.material as THREE.SpriteMaterial).opacity = 0;
+
         if (l.deposited > 0) {
           const cost = l.ever_lit ? this.engine.tuning.relight_cost : this.engine.tuning.lantern_cost;
           const ratio = l.deposited / cost;
-          lv.coreMat.color.setHex(COLORS.lanternOff);
           lv.coreMat.emissive.setHex(COLORS.lanternLit);
           lv.coreMat.emissiveIntensity = ratio * 0.85;
           lv.light.intensity = ratio * 1.4;
         } else {
-          lv.coreMat.color.setHex(COLORS.lanternOff);
           lv.coreMat.emissive.setHex(0x000000);
           lv.coreMat.emissiveIntensity = 0;
           lv.light.intensity = 0;
@@ -971,34 +1680,36 @@ class GameView {
       }
     });
 
-    // 5. Dual-layer Motes InstancedMesh (bobbing & pulsing)
-    const activeMotes = this.engine.motes.filter(m => m.active);
-    for (let i = 0; i < 64; i++) {
-      if (i < activeMotes.length) {
-        const m = activeMotes[i];
-        const floatY = m.pos[1] + 0.55 + Math.sin(time * 3 + i * 1.3) * 0.22;
-        const pulseScale = 0.85 + Math.sin(time * 5 + i) * 0.22;
-        _scratchVec.set(m.pos[0], floatY, m.pos[2]);
-        _scratchScale.set(1, 1, 1);
-        _scratchMatrix.compose(_scratchVec, _scratchQuat, _scratchScale);
-        this.moteCoreInstanced.setMatrixAt(i, _scratchMatrix);
+    // Dual-layer Motes InstancedMesh (up to 128, zero-allocation loop)
+    let moteIdx = 0;
+    for (let mi = 0; mi < this.engine.motes.length && moteIdx < 128; mi++) {
+      const m = this.engine.motes[mi];
+      if (!m.active) continue;
+      const floatY = m.pos[1] + 0.58 + Math.sin(time * 3 + moteIdx * 1.3) * 0.22;
+      const pulseScale = 0.85 + Math.sin(time * 5 + moteIdx) * 0.24;
+      _scratchVec.set(m.pos[0], floatY, m.pos[2]);
+      _scratchScale.set(1, 1, 1);
+      _scratchMatrix.compose(_scratchVec, _scratchQuat, _scratchScale);
+      this.moteCoreInstanced.setMatrixAt(moteIdx, _scratchMatrix);
 
-        _scratchScale.set(pulseScale, pulseScale, pulseScale);
-        _scratchMatrix.compose(_scratchVec, _scratchQuat, _scratchScale);
-        this.moteHaloInstanced.setMatrixAt(i, _scratchMatrix);
-      } else {
-        _scratchMatrix.makeTranslation(0, -999, 0);
-        this.moteCoreInstanced.setMatrixAt(i, _scratchMatrix);
-        this.moteHaloInstanced.setMatrixAt(i, _scratchMatrix);
-      }
+      _scratchScale.set(pulseScale, pulseScale, pulseScale);
+      _scratchMatrix.compose(_scratchVec, _scratchQuat, _scratchScale);
+      this.moteHaloInstanced.setMatrixAt(moteIdx, _scratchMatrix);
+      moteIdx++;
+    }
+    for (let i = moteIdx; i < 128; i++) {
+      _scratchMatrix.makeTranslation(0, -999, 0);
+      this.moteCoreInstanced.setMatrixAt(i, _scratchMatrix);
+      this.moteHaloInstanced.setMatrixAt(i, _scratchMatrix);
     }
     this.moteCoreInstanced.instanceMatrix.needsUpdate = true;
     this.moteHaloInstanced.instanceMatrix.needsUpdate = true;
 
-    // 6. Articulated Shades (Writhing tendrils, chasing lean, stun wobble)
+    // Articulated Shades + Drain Beam
+    const rimHex = this.colorblindMode ? 0x00b3ff : COLORS.shadeRim;
     for (let i = 0; i < this.shadePool.length; i++) {
       const sv = this.shadePool[i];
-      if (i < this.engine.shades.length) {
+      if (!this.isBenchMode && i < this.engine.shades.length) {
         const s = this.engine.shades[i];
         sv.root.visible = true;
         sv.root.position.set(s.pos[0], s.pos[1] + 0.95 + Math.sin(time * 3.5 + i) * 0.16, s.pos[2]);
@@ -1007,58 +1718,78 @@ class GameView {
         const dz = p.pos[2] - s.pos[2];
         sv.root.rotation.y = Math.atan2(dx, dz);
 
-        const rimHex = this.colorblindMode ? 0x00b3ff : COLORS.shadeRim;
         sv.eyeMat.color.setHex(this.colorblindMode ? 0x00b3ff : 0xe6d4ff);
+        (sv.auraSprite.material as THREE.SpriteMaterial).color.setHex(rimHex);
+        sv.drainBeamMat.color.setHex(rimHex);
 
         if (s.state === 'stunned') {
           sv.coreMat.emissive.setHex(COLORS.shadeStunned);
-          sv.root.rotation.z = Math.sin(time * 18) * 0.28;
+          sv.root.rotation.z = this.reduceMotion ? 0 : Math.sin(time * 18) * 0.28;
           sv.root.scale.setScalar(0.88);
+          sv.drainBeam.visible = false;
         } else if (s.state === 'spawning') {
           sv.coreMat.emissive.setHex(rimHex);
           sv.root.scale.setScalar(0.5);
+          sv.drainBeam.visible = false;
         } else if (s.state === 'drain') {
           sv.coreMat.emissive.setHex(rimHex);
           sv.root.rotation.z = 0;
           sv.root.scale.setScalar(1.12 + Math.sin(time * 10) * 0.08);
+          const target = s.target_lantern_id ? this.engine.lanterns.find(l => l.id === s.target_lantern_id) : undefined;
+          if (target) {
+            _scratchVec.set(s.pos[0], s.pos[1] + 1.1, s.pos[2]);
+            _scratchVec2.set(target.pos[0], target.pos[1] + 4.0, target.pos[2]);
+            const dist = _scratchVec.distanceTo(_scratchVec2);
+            sv.drainBeam.position.copy(_scratchVec).lerp(_scratchVec2, 0.5);
+            sv.drainBeam.scale.set(1 + Math.sin(time * 16) * 0.2, 1 + Math.sin(time * 16) * 0.2, dist);
+            sv.drainBeam.lookAt(_scratchVec2);
+            sv.drainBeam.visible = true;
+          } else {
+            sv.drainBeam.visible = false;
+          }
         } else {
           sv.coreMat.emissive.setHex(rimHex);
           sv.root.rotation.z = 0;
           sv.root.rotation.x = s.state === 'chase' ? 0.22 : 0;
           sv.root.scale.setScalar(1.0);
+          sv.drainBeam.visible = false;
         }
 
-        const whipSpeed = s.state === 'chase' ? 9 : 4;
+        const whipSpeed = s.state === 'chase' || s.state === 'drain' ? 10 : 4;
         sv.tendrils.forEach((t, ti) => {
-          t.rotation.z = Math.sin(time * whipSpeed + ti * 1.3) * 0.45;
+          t.rotation.z = this.reduceMotion ? 0 : Math.sin(time * whipSpeed + ti * 1.1) * 0.48;
         });
       } else {
         sv.root.visible = false;
+        sv.drainBeam.visible = false;
       }
     }
 
-    // 7. Flowing Silk Drifters (Multi-segment wave animation)
-    const activeDrifters = this.engine.drifters.filter(d => d.state !== 'removed');
-    for (let i = 0; i < this.drifterPool.length; i++) {
-      const dv = this.drifterPool[i];
-      if (i < activeDrifters.length) {
-        const d = activeDrifters[i];
+    // Flowing Silk Drifters (zero-allocation)
+    let drifterSlot = 0;
+    if (!this.isBenchMode) {
+      for (let di = 0; di < this.engine.drifters.length && drifterSlot < this.drifterPool.length; di++) {
+        const d = this.engine.drifters[di];
+        if (d.state === 'removed') continue;
+        const dv = this.drifterPool[drifterSlot];
         dv.root.visible = true;
-        dv.root.position.set(d.pos[0], d.pos[1] + 1.85 + Math.sin(time * 4 + i) * 0.25, d.pos[2]);
+        dv.root.position.set(d.pos[0], d.pos[1] + 1.85 + Math.sin(time * 4 + drifterSlot) * 0.25, d.pos[2]);
         dv.root.rotation.y = Math.atan2(p.pos[0] - d.pos[0], p.pos[2] - d.pos[2]) + (d.state === 'flee' ? Math.PI : 0);
         dv.segments.forEach((seg, si) => {
-          seg.position.y = Math.sin(time * 10 - si * 0.9) * 0.18;
-          seg.rotation.x = Math.cos(time * 10 - si * 0.9) * 0.25;
+          seg.position.y = Math.sin(time * 10 - si * 0.85) * 0.2;
+          seg.rotation.x = Math.cos(time * 10 - si * 0.85) * 0.28;
         });
-      } else {
-        dv.root.visible = false;
+        drifterSlot++;
       }
     }
+    for (let i = drifterSlot; i < this.drifterPool.length; i++) {
+      this.drifterPool[i].root.visible = false;
+    }
 
-    // 8. Spinning Wind Charms
+    // Spinning Wind Charms
     for (let i = 0; i < this.charmPool.length; i++) {
       const group = this.charmPool[i];
-      if (i < this.engine.charms.length && this.engine.charms[i].available) {
+      if (!this.isBenchMode && i < this.engine.charms.length && this.engine.charms[i].available) {
         const c = this.engine.charms[i];
         group.visible = true;
         group.position.set(c.pos[0], c.pos[1] + 1.05 + Math.sin(time * 3) * 0.18, c.pos[2]);
@@ -1068,7 +1799,7 @@ class GameView {
       }
     }
 
-    // 9. Pulse Shockwave Expansion VFX
+    // Pulse Shockwave VFX
     if (this.pulseVfx.active) {
       this.pulseVfx.progress += dt * 2.8;
       if (this.pulseVfx.progress >= 1) {
@@ -1079,27 +1810,40 @@ class GameView {
         const radius = 0.5 + this.pulseVfx.progress * this.engine.tuning.pulse_radius;
         const alpha = 1 - this.pulseVfx.progress;
         this.pulseVfx.ring.scale.set(radius, radius, 1);
-        (this.pulseVfx.ring.material as THREE.MeshBasicMaterial).opacity = alpha * 0.9;
+        (this.pulseVfx.ring.material as THREE.MeshBasicMaterial).opacity = alpha * 0.95;
         this.pulseVfx.dome.scale.setScalar(radius);
-        (this.pulseVfx.dome.material as THREE.MeshBasicMaterial).opacity = alpha * 0.25;
+        (this.pulseVfx.dome.material as THREE.MeshBasicMaterial).opacity = alpha * 0.26;
       }
     }
 
-    // 10. Environment Ambient Animations (Jump Pads, Bell, Cloud Sea, Night 3 Wind Leaves)
+    // Environment Ambient Animations
     for (const ring of this.jumpPadRings) {
       const cycle = (time * 1.4) % 1;
       ring.position.y = (ring.userData.baseY as number) + cycle * 1.1;
       ring.scale.setScalar(0.85 + cycle * 0.45);
     }
     if (this.bellMesh) {
-      this.bellMesh.rotation.z = Math.sin(time * 1.8) * 0.16;
+      this.bellMesh.rotation.z = this.reduceMotion ? 0 : Math.sin(time * 1.8) * 0.18;
     }
-    for (let i = 0; i < this.cloudPuffs.length; i++) {
-      this.cloudPuffs[i].position.y = -6.5 + Math.sin(time * 0.6 + i) * 0.6;
+    if (this.boatGroup) {
+      this.boatGroup.position.y = -1.6 + Math.sin(time * 1.3) * 0.22;
+      this.boatGroup.rotation.z = Math.sin(time * 1.1) * 0.08;
+      this.boatGroup.rotation.x = Math.cos(time * 0.9) * 0.04;
+    }
+    for (const rock of this.floatingRocks) {
+      const phase = (rock.userData.phase as number) ?? 0;
+      rock.position.y = (rock.userData.baseY as number) + Math.sin(time * 0.9 + phase) * 0.65;
+      rock.rotation.y = time * 0.18 + phase;
+    }
+    const windAmp = this.reduceMotion ? 0 : this.engine.wind.active ? 0.11 : 0.032;
+    const windFreq = this.engine.wind.active ? 4.2 : 1.5;
+    for (const fg of this.swayFoliageGroups) {
+      const phase = (fg.userData.phase as number) ?? 0;
+      fg.rotation.z = Math.sin(time * windFreq + phase) * windAmp;
+      fg.rotation.x = Math.cos(time * windFreq * 0.8 + phase) * (windAmp * 0.6);
     }
 
-    // Wind leaves particles in Night 3
-    if (this.engine.wind.active) {
+    if (!this.isBenchMode && this.engine.wind.active) {
       this.windLeavesInstanced.visible = true;
       const rad = (this.engine.wind.dir_deg * Math.PI) / 180;
       const cos = Math.cos(rad);
