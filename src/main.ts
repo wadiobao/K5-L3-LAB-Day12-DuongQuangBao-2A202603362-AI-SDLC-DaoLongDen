@@ -4,7 +4,7 @@
  */
 
 import * as THREE from 'three';
-import { GameEngine, DEFAULT_TUNING } from './core/engine.js';
+import { GameEngine, DEFAULT_TUNING_V11 } from './core/engine.js';
 import { soundFx } from './render/audio.js';
 
 // Pre-allocated scratch objects to prevent garbage collection allocations in render loop (three-best-practices rule)
@@ -44,7 +44,7 @@ class GameView {
 
   constructor() {
     this.canvas = document.getElementById('webgl-canvas') as HTMLCanvasElement;
-    this.engine = new GameEngine(Date.now(), DEFAULT_TUNING);
+    this.engine = new GameEngine(Date.now(), 1, DEFAULT_TUNING_V11);
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
@@ -252,7 +252,7 @@ class GameView {
 
   private restartGame(): void {
     this.modalUI.style.display = 'none';
-    this.engine = new GameEngine(Date.now(), DEFAULT_TUNING);
+    this.engine = new GameEngine(Date.now(), 1, DEFAULT_TUNING_V11);
 
     // Reset lantern visuals
     this.lanternLights.forEach(l => (l.intensity = 0));

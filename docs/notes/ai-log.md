@@ -1,22 +1,23 @@
-# AI Usage Log & Token Cost Tracking — Phase 1
+# AI Usage Log & Token Cost Tracking — Phase 2
 
-## 1. Nhật Ký Tiến Trình SDLC & Can Thiệp AI
-- **Giai đoạn**: Khởi tạo kiến trúc, thiết lập Harness, Core Simulation Engine và Three.js Interactive View.
+## 1. Nhật Ký Tiến Trình SDLC — Phase 2 (Ticket-02)
+- **Giai đoạn**: Mở rộng 3 Đêm, chuẩn hóa số liệu bắt buộc, cài đặt vật lý Nhảy/Lướt, bục nhảy, rơi vực, Gió Lạc và Bùa Gió theo Test Contract v1.1.
 - **Mô hình AI sử dụng**: Gemini 3.8 Flash (Medium) & Claude Opus 5.5.
-- **Kỹ năng Harness tích hợp**:
-  - `3d-games` (Kiến trúc & Toán học Game 3D).
-  - `three-best-practices` (Tối ưu hóa Three.js WebGL & VRAM).
+- **Harness áp dụng**:
+  - `3d-games`: Toán học dốc nghiêng $Y(r)$, giải thuật bục nhảy quán tính, camera damping.
+  - `three-best-practices`: InstancedMesh, cấu trúc không sinh rác bộ nhớ.
 
 ## 2. Ước Tính Token & Chi Phí
 | Phase | Lượt tương tác (Turns) | Input Tokens ước tính | Output Tokens ước tính | Chi phí ước tính (USD) |
 |---|---|---|---|---|
 | **Phase 1 (PRD-0)** | 8 turns | ~42,000 | ~7,500 | ~$0.025 |
+| **Phase 2 (Ticket-02)**| 5 turns | ~35,000 | ~6,500 | ~$0.021 |
+| **Tổng cộng** | 13 turns | ~77,000 | ~14,000 | ~$0.046 |
 
 ### Biện pháp tiết kiệm Token đã áp dụng:
-1. **Thiết kế trước khi code**: Định nghĩa schema và tuning một lần trong `game.contract.json` giúp giảm thiểu việc chỉnh sửa lặp lại.
-2. **Batch Operations**: Chạy song song các thao tác ghi file, kiểm thử và sinh bằng chứng trong cùng một turn.
-3. **Decoupled Architecture**: Phân tách triệt để Core Engine giúp việc viết test không phải nạp context của thư viện đồ họa Three.js.
+1. **Module hóa địa hình (`src/core/terrain.ts`)**: Tách biệt logic hình học 3 Đêm ra khỏi engine, giúp code ngắn gọn, dễ debug và giảm context size khi kiểm thử.
+2. **Strict Step Ordering**: Sắp xếp 12 bước tuần tự ngay từ đầu giúp giải quyết dứt điểm các lỗi logic tương tác trong 1 lần chạy test.
 
-## 3. Nhật Ký Lỗi & Hiệu Chỉnh Harness
-- **Lỗi phát hiện**: Tránh hiện tượng non-determinism khi sinh vị trí thực thể.
-- **Hiệu chỉnh**: Cài đặt lớp `PRNG` (Mulberry32) nhận `--seed` trực tiếp từ CLI, bảo đảm 100% tính tất định giữa các lần chạy độc lập.
+## 3. Nhật Ký Lỗi & Tinh Chỉnh Harness
+- **Lỗi phát hiện**: Bất đồng bộ thứ tự giảm bộ đếm `dashCooldownTicks` và `charmTicks` trong cùng tick kích hoạt.
+- **Tinh chỉnh**: Khẳng định quy tắc: Các bộ đếm giảm ở Bước 2, trong khi hành động kích hoạt ở Bước 3 và Bước 4; giá trị snapshot cuối tick phản ánh chính xác sau khi đã kích hoạt.

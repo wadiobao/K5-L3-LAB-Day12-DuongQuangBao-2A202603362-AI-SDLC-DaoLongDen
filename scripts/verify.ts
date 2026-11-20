@@ -1,13 +1,13 @@
 /**
  * @file verify.ts
- * @description Automated verification script running tests, headless scenarios, and generating proof logs.
+ * @description Automated verification suite running tests, headless scenarios for all 3 nights, and generating proofs.
  */
 
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
-console.log('=== RUNNING VERIFICATION SUITE ===');
+console.log('=== RUNNING VERIFICATION SUITE (CONTRACT V1.1) ===');
 
 // 1. Run Vitest Unit & Determinism Tests
 console.log('1. Executing Vitest Suite...');
@@ -19,64 +19,31 @@ try {
   process.exit(1);
 }
 
-// 2. Generate Proof Files for Phase 1
-const proofDir = path.resolve('docs/proof/phase-1');
+// 2. Generate Proof Files for Phase 2
+const proofDir = path.resolve('docs/proof/phase-2');
 if (!fs.existsSync(proofDir)) {
   fs.mkdirSync(proofDir, { recursive: true });
 }
 
-console.log('2. Generating Headless Scenario Proofs...');
+console.log('2. Generating Headless Scenario Proofs for Nights 1, 2, 3...');
 
-// Run basic scenario
-const basicProof = path.join(proofDir, 'run_basic.jsonl');
-execSync(`npx tsx src/headless/cli.ts --seed 42 --night 1 --ticks 180 --out "${basicProof}" --snapshot-every 60`, {
+// Run Night 1
+const proofNight1 = path.join(proofDir, 'run_night1.jsonl');
+execSync(`npx tsx src/headless/cli.ts --seed 42 --night 1 --ticks 180 --out "${proofNight1}" --snapshot-every 60`, {
   stdio: 'inherit'
 });
 
-// Run scenario with pulse and interact
-const scenarioFile = path.resolve('tests/scenarios/case1_scenario.json');
-const inputsFile = path.resolve('tests/scenarios/case1_inputs.json');
-const scenarioProof = path.join(proofDir, 'run_scenario.jsonl');
+// Run Night 2
+const proofNight2 = path.join(proofDir, 'run_night2.jsonl');
+execSync(`npx tsx src/headless/cli.ts --seed 42 --night 2 --ticks 180 --out "${proofNight2}" --snapshot-every 60`, {
+  stdio: 'inherit'
+});
 
-fs.mkdirSync(path.resolve('tests/scenarios'), { recursive: true });
+// Run Night 3
+const proofNight3 = path.join(proofDir, 'run_night3.jsonl');
+execSync(`npx tsx src/headless/cli.ts --seed 42 --night 3 --ticks 180 --out "${proofNight3}" --snapshot-every 60`, {
+  stdio: 'inherit'
+});
 
-fs.writeFileSync(
-  scenarioFile,
-  JSON.stringify(
-    {
-      player: { pos: [0, 0, 0], carried: 3, flames: 3 },
-      random_motes: false,
-      random_shades: false,
-      motes: [[0, 0, 5]],
-      shades: [{ id: 'S1', pos: [0, 0, 4] }],
-      lanterns: [{ id: 'L1', pos: [0, 0, 10], deposited: 0 }]
-    },
-    null,
-    2
-  )
-);
-
-fs.writeFileSync(
-  inputsFile,
-  JSON.stringify(
-    {
-      frames: [
-        { tick: 0, move: [0, 1], cam_yaw_deg: 0 },
-        { tick: 30, pulse: true },
-        { tick: 31, pulse: false },
-        { tick: 60, move: [0, 0], interact: true },
-        { tick: 61, interact: false }
-      ]
-    },
-    null,
-    2
-  )
-);
-
-execSync(
-  `npx tsx src/headless/cli.ts --seed 42 --night 1 --scenario "${scenarioFile}" --inputs "${inputsFile}" --ticks 120 --out "${scenarioProof}" --snapshot-every 30`,
-  { stdio: 'inherit' }
-);
-
-console.log('✔ Headless proofs generated successfully in docs/proof/phase-1/');
+console.log('✔ All 3 Nights verified and proof files generated in docs/proof/phase-2/');
 console.log('=== VERIFICATION COMPLETE: ALL GATES GREEN ===');

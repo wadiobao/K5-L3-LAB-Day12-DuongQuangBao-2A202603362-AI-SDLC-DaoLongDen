@@ -1,11 +1,11 @@
 /**
  * @file cli.ts
- * @description Headless CLI runner implementing Test Contract v1.0 for Dao Den Long.
+ * @description Headless CLI runner implementing Test Contract v1.1 for Dao Den Long.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { GameEngine, DEFAULT_TUNING } from '../core/engine.js';
+import { GameEngine, DEFAULT_TUNING_V11 } from '../core/engine.js';
 import { InputFrame, InputScenario, TuningConfig } from '../core/types.js';
 
 interface CliArgs {
@@ -18,9 +18,6 @@ interface CliArgs {
   snapshotEvery: number;
 }
 
-/**
- * Parses CLI arguments into structured configuration.
- */
 function parseArgs(args: string[]): CliArgs {
   let seed = 42;
   let night = 1;
@@ -52,9 +49,6 @@ function parseArgs(args: string[]): CliArgs {
   return { seed, night, scenarioPath, inputsPath, ticks, outPath, snapshotEvery };
 }
 
-/**
- * Reads and validates a JSON file, exiting with code 2 if invalid.
- */
 function readJsonFile<T>(filePath: string): T {
   try {
     if (!fs.existsSync(filePath)) {
@@ -69,33 +63,29 @@ function readJsonFile<T>(filePath: string): T {
   }
 }
 
-/**
- * Main headless runner execution.
- */
 export function runHeadless(cliArgs: CliArgs): void {
-  // Load tuning if contract file is present
-  let tuning: TuningConfig = DEFAULT_TUNING;
+  let tuning: TuningConfig = DEFAULT_TUNING_V11;
   const contractPath = path.resolve(process.cwd(), 'game.contract.json');
   if (fs.existsSync(contractPath)) {
     try {
       const contract = JSON.parse(fs.readFileSync(contractPath, 'utf-8'));
       if (contract.tuning) {
-        tuning = { ...DEFAULT_TUNING, ...contract.tuning };
+        tuning = { ...DEFAULT_TUNING_V11, ...contract.tuning };
       }
     } catch {
-      // Fallback to default
+      // Fallback
     }
   }
 
-  const engine = new GameEngine(cliArgs.seed, tuning);
+  const engine = new GameEngine(cliArgs.seed, cliArgs.night, tuning);
 
-  // Apply scenario if specified
+  // Apply scenario if provided
   if (cliArgs.scenarioPath) {
     const scenario = readJsonFile<InputScenario>(cliArgs.scenarioPath);
     engine.applyScenario(scenario);
   }
 
-  // Load input frames if specified
+  // Load inputs if provided
   const inputMap = new Map<number, InputFrame>();
   if (cliArgs.inputsPath) {
     const inputData = readJsonFile<{ frames: InputFrame[] }>(cliArgs.inputsPath);
@@ -115,7 +105,7 @@ export function runHeadless(cliArgs: CliArgs): void {
     }
   }
 
-  // Prepare output file stream
+  // Output preparation
   const outDir = path.dirname(path.resolve(cliArgs.outPath));
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
@@ -123,36 +113,33 @@ export function runHeadless(cliArgs: CliArgs): void {
 
   const outLines: string[] = [];
 
-  // Snapshot tick 0 before applying any input
+  // Snapshot tick 0 before any input
   outLines.push(JSON.stringify(engine.getSnapshot()));
 
-  // Simulation Loop for N ticks
+  // Run simulation for N ticks
   for (let k = 0; k < cliArgs.ticks; k++) {
     const input = inputMap.get(k);
     const events = engine.step(input);
 
-    // Write events triggered in this step
     for (const ev of events) {
       outLines.push(JSON.stringify(ev));
     }
 
-    // Write snapshot every snapshotEvery ticks
     const currentTick = engine.tickCount;
     if (currentTick % cliArgs.snapshotEvery === 0) {
       outLines.push(JSON.stringify(engine.getSnapshot()));
     }
 
-    // Stop early if game reaches end state (won or lost)
-    if (engine.state !== 'playing') {
+    if (engine.state !== 'playing' && engine.state !== 'paused') {
       break;
     }
   }
 
-  // End line is mandatory as the final line
+  // Mandatory End line
   const endRecord = {
     type: 'end',
     ticks: engine.tickCount,
-    state: engine.state,
+    state: engine.state === 'paused' ? 'playing' : engine.state,
     score: engine.score
   };
   outLines.push(JSON.stringify(endRecord));
@@ -160,7 +147,6 @@ export function runHeadless(cliArgs: CliArgs): void {
   fs.writeFileSync(cliArgs.outPath, outLines.join('\n') + '\n', 'utf-8');
 }
 
-// Execute when invoked directly from CLI
 if (process.argv[1] && process.argv[1].endsWith('cli.ts')) {
   const args = parseArgs(process.argv.slice(2));
   runHeadless(args);
