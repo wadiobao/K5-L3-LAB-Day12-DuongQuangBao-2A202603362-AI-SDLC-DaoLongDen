@@ -35,10 +35,14 @@ export interface ShadeState {
   id: string;
   pos: Vector3D;
   state: ShadeBehaviorState;
+  spawnTicks: number;
   stunTicks: number;
   recoilTicks: number;
-  pushTicks: number;
-  pushDir: Vector2D;
+  recoilDir: Vector2D;
+  safePushTicks: number;
+  safePushDir: Vector2D;
+  pulsePushTicks: number;
+  pulsePushDir: Vector2D;
   targetPos?: Vector3D;
 }
 

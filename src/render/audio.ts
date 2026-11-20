@@ -1,13 +1,39 @@
 /**
  * @file audio.ts
- * @description Procedural sound synthesizer using Web Audio API.
+ * @description Procedural sound synthesizer using Web Audio API with persistent volume control.
  * 100% royalty-free, zero external audio asset dependencies.
  */
 
 class ProceduralAudio {
   private ctx: AudioContext | null = null;
+  private masterVolume: number = 0.7;
 
-  private initCtx(): AudioContext {
+  constructor() {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const saved = window.localStorage.getItem('ddl_volume');
+      if (saved !== null) {
+        const parsed = parseFloat(saved);
+        if (!Number.isNaN(parsed)) this.masterVolume = Math.max(0, Math.min(1, parsed));
+      }
+    }
+  }
+
+  /**
+   * Updates master output volume (0.0 to 1.0) and persists to localStorage.
+   */
+  public setVolume(vol: number): void {
+    this.masterVolume = Math.max(0, Math.min(1, vol));
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem('ddl_volume', String(this.masterVolume));
+    }
+  }
+
+  public getVolume(): number {
+    return this.masterVolume;
+  }
+
+  private initCtx(): AudioContext | null {
+    if (this.masterVolume <= 0.001) return null;
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.ctx = new AudioCtx();
@@ -18,108 +44,66 @@ class ProceduralAudio {
     return this.ctx;
   }
 
-  /**
-   * Warm wind chime tone when picking up a mote.
-   */
+  private tone(type: OscillatorType, startHz: number, endHz: number, duration: number, gainPeak: number): void {
+    try {
+      const ctx = this.initCtx();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(startHz, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(20, endHz), ctx.currentTime + duration);
+
+      gain.gain.setValueAtTime(gainPeak * this.masterVolume, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + duration);
+    } catch {
+      // Autoplay fallback
+    }
+  }
+
   playMotePickup(): void {
-    try {
-      const ctx = this.initCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5
-
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start();
-      osc.stop(ctx.currentTime + 0.3);
-    } catch {
-      // Audio autoplay policy fallback
-    }
+    this.tone('sine', 587.33, 880, 0.25, 0.2);
   }
 
-  /**
-   * Resonant temple bell chime when lighting a lantern.
-   */
   playLanternLit(): void {
-    try {
-      const ctx = this.initCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(220, ctx.currentTime); // A3
-      osc.frequency.exponentialRampToValueAtTime(110, ctx.currentTime + 1.2);
-
-      gain.gain.setValueAtTime(0.4, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start();
-      osc.stop(ctx.currentTime + 1.5);
-    } catch {
-      // Audio fallback
-    }
+    this.tone('triangle', 220, 440, 0.9, 0.35);
   }
 
-  /**
-   * Low shockwave burst when activating pulse ability.
-   */
   playPulse(): void {
-    try {
-      const ctx = this.initCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(160, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.4);
-
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start();
-      osc.stop(ctx.currentTime + 0.5);
-    } catch {
-      // Audio fallback
-    }
+    this.tone('sawtooth', 160, 40, 0.4, 0.28);
   }
 
-  /**
-   * Dull thud when Mây is struck by ink shade.
-   */
   playHurt(): void {
-    try {
-      const ctx = this.initCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+    this.tone('sine', 100, 35, 0.28, 0.35);
+  }
 
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(90, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(30, ctx.currentTime + 0.25);
+  playJump(): void {
+    this.tone('sine', 240, 480, 0.16, 0.18);
+  }
 
-      gain.gain.setValueAtTime(0.35, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+  playDash(): void {
+    this.tone('triangle', 420, 140, 0.18, 0.22);
+  }
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+  playShadeSpawn(): void {
+    this.tone('sawtooth', 85, 55, 0.45, 0.15);
+  }
 
-      osc.start();
-      osc.stop(ctx.currentTime + 0.3);
-    } catch {
-      // Audio fallback
-    }
+  playCountdownTick(): void {
+    this.tone('square', 660, 660, 0.06, 0.1);
+  }
+
+  playWin(): void {
+    this.tone('triangle', 440, 880, 0.6, 0.3);
+  }
+
+  playLose(): void {
+    this.tone('sawtooth', 180, 50, 0.7, 0.3);
   }
 }
 

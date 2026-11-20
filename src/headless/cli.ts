@@ -115,6 +115,7 @@ export function runHeadless(cliArgs: CliArgs): void {
 
   // Snapshot tick 0 before any input
   outLines.push(JSON.stringify(engine.getSnapshot()));
+  outLines.push(JSON.stringify({ type: 'event', tick: 0, name: 'night_start', data: { night: engine.night } }));
 
   // Run simulation for N ticks
   for (let k = 0; k < cliArgs.ticks; k++) {
