@@ -74,8 +74,21 @@ class ProceduralAudio {
     this.tone('triangle', 220, 440, 0.9, 0.35);
   }
 
+  /**
+   * Plays a sharp metallic katana whirlwind slash sound for the 360° skill.
+   */
   playPulse(): void {
-    this.tone('sawtooth', 160, 40, 0.4, 0.28);
+    this.tone('sawtooth', 980, 140, 0.24, 0.24);
+    this.tone('triangle', 1480, 320, 0.18, 0.16);
+  }
+
+  /**
+   * Plays a dramatic multi-layered katana unsheathe + island-wide crescent wave slice sound.
+   */
+  playUltimateSlash(): void {
+    this.tone('sine', 1320, 2400, 0.18, 0.22);
+    this.tone('sawtooth', 720, 55, 0.65, 0.34);
+    this.tone('triangle', 165, 52, 0.95, 0.32);
   }
 
   playHurt(): void {

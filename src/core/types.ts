@@ -19,6 +19,7 @@ export interface PlayerState {
   dashCooldownTicks: number;
   dashDirection: Vector2D;
   pulseCooldownTicks: number;
+  ultimateCharge: number;
   charmTicks: number;
   respawnDelayTicks: number;
   isLaunched: boolean;
@@ -145,6 +146,7 @@ export interface InputFrame {
   dash?: boolean;
   interact?: boolean;
   pulse?: boolean;
+  ultimate?: boolean;
   pause?: boolean;
 }
 

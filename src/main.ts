@@ -39,12 +39,14 @@ import {
   ShadeVisual,
   DrifterVisual,
   PulseVfx,
+  UltimateSlashVfx,
   createPlayerRig,
   createLanternVisual,
   createShadeVisual,
   createDrifterVisual,
   createCharmVisual,
   createPulseVfx,
+  createUltimateSlashVfx,
   addIslandDecorations,
   addConnectedArchipelago
 } from './render/visuals.js';
@@ -59,7 +61,7 @@ const _scratchQuat = new THREE.Quaternion();
 const _scratchEuler = new THREE.Euler();
 const _projVec = new THREE.Vector3();
 
-type ActionKey = 'up' | 'down' | 'left' | 'right' | 'jump' | 'dash' | 'interact' | 'pulse' | 'pause';
+type ActionKey = 'up' | 'down' | 'left' | 'right' | 'jump' | 'dash' | 'interact' | 'pulse' | 'ultimate' | 'pause';
 
 const DEFAULT_KEYBINDS: Record<ActionKey, string> = {
   up: 'w',
@@ -70,6 +72,7 @@ const DEFAULT_KEYBINDS: Record<ActionKey, string> = {
   dash: 'shift',
   interact: 'e',
   pulse: 'f',
+  ultimate: 'j',
   pause: 'escape'
 };
 
@@ -81,7 +84,8 @@ const ACTION_LABELS: Record<ActionKey, string> = {
   jump: 'Nhảy',
   dash: 'Lướt (Dash)',
   interact: 'Nạp / Châm dầu',
-  pulse: 'Tỏa sáng (Pulse)',
+  pulse: 'Trảm Xoay (Skill)',
+  ultimate: 'Trảm Toàn Đảo (Chiêu cuối)',
   pause: 'Tạm dừng'
 };
 
@@ -150,6 +154,7 @@ class GameView {
   private landingSquash: number = 0;
   private interactAnimTimer: number = 0;
   private pulseAnimTimer: number = 0;
+  private ultimateAnimTimer: number = 0;
 
   private canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
@@ -185,6 +190,7 @@ class GameView {
   private drifterPool: DrifterVisual[] = [];
   private charmPool: THREE.Group[] = [];
   private pulseVfx!: PulseVfx;
+  private ultimateVfx!: UltimateSlashVfx;
 
   // Input State
   private keyState: Record<string, boolean> = {};
@@ -192,6 +198,7 @@ class GameView {
   private pendingDash: boolean = false;
   private pendingInteract: boolean = false;
   private pendingPulse: boolean = false;
+  private pendingUltimate: boolean = false;
 
   // HUD & Overlays
   private hudEl!: HTMLElement;
@@ -207,6 +214,8 @@ class GameView {
   private dashCdUI!: HTMLElement;
   private pulseBadgeUI!: HTMLElement;
   private pulseCdUI!: HTMLElement;
+  private ultBadgeUI!: HTMLElement;
+  private ultCdUI!: HTMLElement;
   private charmBadgeUI!: HTMLElement;
   private charmCdUI!: HTMLElement;
   private arrowUI!: HTMLElement;
@@ -386,6 +395,8 @@ class GameView {
     this.dashCdUI = document.getElementById('dash-cd')!;
     this.pulseBadgeUI = document.getElementById('pulse-badge')!;
     this.pulseCdUI = document.getElementById('pulse-cd')!;
+    this.ultBadgeUI = document.getElementById('ult-badge')!;
+    this.ultCdUI = document.getElementById('ult-cd')!;
     this.charmBadgeUI = document.getElementById('charm-badge')!;
     this.charmCdUI = document.getElementById('charm-cd')!;
     this.arrowUI = document.getElementById('lantern-arrow')!;
@@ -536,8 +547,8 @@ class GameView {
     hint.innerHTML =
       `<div><span class="key-badge">${formatKeyLabel(k.up)}${formatKeyLabel(k.left)}${formatKeyLabel(k.down)}${formatKeyLabel(k.right)}</span> Chạy · ` +
       `<span class="key-badge">${formatKeyLabel(k.jump)}</span> Nhảy · <span class="key-badge">${formatKeyLabel(k.dash)}</span> Lướt</div>` +
-      `<div><span class="key-badge">${formatKeyLabel(k.interact)}</span> Nạp/Châm · <span class="key-badge">${formatKeyLabel(k.pulse)}</span> Tỏa sáng · ` +
-      `<span class="key-badge">${formatKeyLabel(k.pause)}</span> Dừng</div>`;
+      `<div><span class="key-badge">${formatKeyLabel(k.interact)}</span> Nạp/Châm · <span class="key-badge">${formatKeyLabel(k.pulse)}</span> Trảm Xoay · ` +
+      `<span class="key-badge">${formatKeyLabel(k.ultimate)}</span> Chiêu Cuối · <span class="key-badge">${formatKeyLabel(k.pause)}</span> Dừng</div>`;
   }
 
   private async loadLeaderboardEntries(): Promise<LeaderboardEntry[]> {
@@ -856,7 +867,10 @@ class GameView {
     }
 
     this.pulseVfx = createPulseVfx();
-    this.scene.add(this.pulseVfx.ring, this.pulseVfx.dome);
+    this.scene.add(this.pulseVfx.ring, this.pulseVfx.bladeArc1, this.pulseVfx.bladeArc2);
+
+    this.ultimateVfx = createUltimateSlashVfx();
+    this.scene.add(this.ultimateVfx.group);
 
     this.particleSystem = new ParticleBurstSystem(this.textures.glowSpriteMap, 240);
     this.scene.add(this.particleSystem.points);
@@ -1083,18 +1097,25 @@ class GameView {
       }
       this.keyState[k] = true;
       if (k === this.keybinds.jump) this.pendingJump = true;
-      if (k === this.keybinds.dash || (this.keybinds.dash === 'shift' && k === 'j')) this.pendingDash = true;
+      if (k === this.keybinds.dash) this.pendingDash = true;
       if (k === this.keybinds.interact) this.pendingInteract = true;
       if (k === this.keybinds.pulse) this.pendingPulse = true;
+      if (k === this.keybinds.ultimate) {
+        this.pendingUltimate = true;
+        if (this.isInGame && this.engine.state === 'playing' && this.engine.player.ultimateCharge < 2) {
+          this.showCaption(`⚔ Chiêu Cuối chưa sẵn sàng (${this.engine.player.ultimateCharge}/2 Trảm Xoay)`, 1.8);
+        }
+      }
     });
 
     window.addEventListener('keyup', e => {
       const k = e.key.toLowerCase();
       this.keyState[k] = false;
       if (k === this.keybinds.jump) this.pendingJump = false;
-      if (k === this.keybinds.dash || (this.keybinds.dash === 'shift' && k === 'j')) this.pendingDash = false;
+      if (k === this.keybinds.dash) this.pendingDash = false;
       if (k === this.keybinds.interact) this.pendingInteract = false;
       if (k === this.keybinds.pulse) this.pendingPulse = false;
+      if (k === this.keybinds.ultimate) this.pendingUltimate = false;
     });
   }
 
@@ -1248,6 +1269,16 @@ class GameView {
     } else {
       this.pulseBadgeUI.className = 'ability-badge ready';
       this.pulseCdUI.innerText = 'Sẵn sàng';
+    }
+
+    const ultCharge = this.engine.player.ultimateCharge;
+    const ultKey = formatKeyLabel(this.keybinds.ultimate);
+    if (ultCharge >= 2) {
+      this.ultBadgeUI.className = 'ability-badge ult-ready';
+      this.ultCdUI.innerText = `SẴN SÀNG (${ultKey})`;
+    } else {
+      this.ultBadgeUI.className = 'ability-badge cd';
+      this.ultCdUI.innerText = `Tích: ${ultCharge}/2`;
     }
 
     // End Screen Modal + Leaderboard Save prompt (on Night 3 Win OR any Lose)
@@ -1450,7 +1481,8 @@ class GameView {
             jump: this.pendingJump,
             dash: this.pendingDash,
             interact: this.pendingInteract,
-            pulse: this.pendingPulse
+            pulse: this.pendingPulse,
+            ultimate: this.pendingUltimate
           });
 
           const p = this.engine.player.pos;
@@ -1482,7 +1514,19 @@ class GameView {
               soundFx.playPulse();
               this.pulseAnimTimer = 0.38;
               this.triggerPulseVfx();
-              if (!this.reduceMotion) this.particleSystem.emit(p[0], p[1] + 0.8, p[2], 24, 1.0, 0.78, 0.32, 6.5, 2.2, 0.65);
+              if (!this.reduceMotion) this.particleSystem.emit(p[0], p[1] + 0.9, p[2], 24, 1.0, 0.92, 0.72, 7.5, 1.8, 0.48);
+              if (this.engine.player.ultimateCharge >= 2) {
+                this.showCaption(`⚔ Chiêu Cuối TRẢM TOÀN ĐẢO sẵn sàng! Ấn [${formatKeyLabel(this.keybinds.ultimate)}]`, 3.0);
+              }
+            } else if (ev.name === 'ultimate_slash') {
+              soundFx.playUltimateSlash();
+              this.ultimateAnimTimer = 0.75;
+              this.triggerUltimateVfx();
+              this.showCaption('⚔ TRẢM TOÀN ĐẢO! Quét sạch Bóng Mực khắp hòn đảo!', 2.6);
+              if (!this.reduceMotion) {
+                this.particleSystem.emit(p[0], p[1] + 1.1, p[2], 48, 1.0, 0.35, 0.35, 16.0, 4.0, 0.85);
+                this.particleSystem.emit(p[0], p[1] + 1.1, p[2], 36, 1.0, 0.85, 0.45, 12.5, 3.2, 0.75);
+              }
             } else if (ev.name === 'dash') {
               soundFx.playDash();
               if (!this.reduceMotion) this.particleSystem.emit(p[0], p[1] + 0.7, p[2], 14, 0.95, 0.76, 0.3, 4.2, 1.6, 0.45);
@@ -1518,10 +1562,20 @@ class GameView {
     this.pulseVfx.active = true;
     this.pulseVfx.progress = 0;
     const p = this.engine.player.pos;
-    this.pulseVfx.ring.position.set(p[0], p[1] + 0.15, p[2]);
-    this.pulseVfx.dome.position.set(p[0], p[1] + 0.8, p[2]);
+    this.pulseVfx.ring.position.set(p[0], p[1] + 0.25, p[2]);
+    this.pulseVfx.bladeArc1.position.set(p[0], p[1] + 0.95, p[2]);
+    this.pulseVfx.bladeArc2.position.set(p[0], p[1] + 1.05, p[2]);
     this.pulseVfx.ring.visible = true;
-    this.pulseVfx.dome.visible = !this.reduceMotion;
+    this.pulseVfx.bladeArc1.visible = true;
+    this.pulseVfx.bladeArc2.visible = !this.reduceMotion;
+  }
+
+  private triggerUltimateVfx(): void {
+    this.ultimateVfx.active = true;
+    this.ultimateVfx.progress = 0;
+    const p = this.engine.player.pos;
+    this.ultimateVfx.group.position.set(p[0], p[1], p[2]);
+    this.ultimateVfx.group.visible = true;
   }
 
   private updateVisuals(dt: number): void {
@@ -1560,6 +1614,7 @@ class GameView {
     if (this.landingSquash > 0) this.landingSquash = Math.max(0, this.landingSquash - dt * 5);
     if (this.interactAnimTimer > 0) this.interactAnimTimer = Math.max(0, this.interactAnimTimer - dt);
     if (this.pulseAnimTimer > 0) this.pulseAnimTimer = Math.max(0, this.pulseAnimTimer - dt);
+    if (this.ultimateAnimTimer > 0) this.ultimateAnimTimer = Math.max(0, this.ultimateAnimTimer - dt);
 
     // Contact Ground Shadow
     const groundY = getGroundHeight(p.pos[0], p.pos[2], this.currentNight, p.pos[1]);
@@ -1661,19 +1716,32 @@ class GameView {
     this.playerRig.pouchMat.emissiveIntensity = 0.1 + carryRatio * 1.6;
     this.playerRig.katanaBladeGlowMat.emissiveIntensity = 0.85 + carryRatio * 2.1;
 
-    // Katana Draw & Sweeping Slash Animation on Pulse (Tỏa Sáng) or Dash (Lướt)
-    const isSlashing = this.pulseAnimTimer > 0 || isDashing;
+    // Katana Draw & 360° Whirlwind Slash / Island-Wide Ultimate Finisher Animation
+    const isSlashing = this.pulseAnimTimer > 0 || this.ultimateAnimTimer > 0 || isDashing;
     this.playerRig.katanaDrawn.visible = isSlashing;
     this.playerRig.katanaSheathedHilt.visible = !isSlashing;
     this.playerRig.katanaScabbard.rotation.x = 0.08 + Math.min(0.24, horizSpeed * 0.025);
-    if (this.pulseAnimTimer > 0 && !this.reduceMotion) {
+    if (this.ultimateAnimTimer > 0) {
+      const ultProg = 1 - this.ultimateAnimTimer / 0.75;
+      // Full 720° samurai spin slash around Mây
+      if (!this.reduceMotion) this.playerRig.root.rotation.y = this.playerYaw + ultProg * Math.PI * 4;
+      this.playerRig.katanaSlashArc.visible = !this.reduceMotion;
+      this.playerRig.katanaSlashArc.rotation.z = -2.2 + ultProg * 12.0;
+      this.playerRig.katanaSlashArc.scale.setScalar(1.4 + ultProg * 3.8);
+      (this.playerRig.katanaSlashArc.material as THREE.MeshBasicMaterial).opacity = (1 - ultProg) * 0.95;
+      this.playerRig.rightArm.rotation.x = -1.55;
+      this.playerRig.rightArm.rotation.z = -1.5 + ultProg * 3.2;
+      this.playerRig.leftArm.rotation.x = -0.9;
+    } else if (this.pulseAnimTimer > 0) {
       const slashProg = 1 - this.pulseAnimTimer / 0.38;
-      this.playerRig.katanaSlashArc.visible = true;
-      this.playerRig.katanaSlashArc.rotation.z = -1.8 + slashProg * 4.4;
-      this.playerRig.katanaSlashArc.scale.setScalar(0.9 + slashProg * 1.65);
-      (this.playerRig.katanaSlashArc.material as THREE.MeshBasicMaterial).opacity = (1 - slashProg) * 0.9;
-      this.playerRig.rightArm.rotation.x = -1.45;
-      this.playerRig.rightArm.rotation.z = -1.2 + slashProg * 2.6;
+      // 360° whirlwind spin slash around Mây
+      if (!this.reduceMotion) this.playerRig.root.rotation.y = this.playerYaw + slashProg * Math.PI * 2;
+      this.playerRig.katanaSlashArc.visible = !this.reduceMotion;
+      this.playerRig.katanaSlashArc.rotation.z = -1.8 + slashProg * 6.5;
+      this.playerRig.katanaSlashArc.scale.setScalar(1.0 + slashProg * 2.2);
+      (this.playerRig.katanaSlashArc.material as THREE.MeshBasicMaterial).opacity = (1 - slashProg) * 0.92;
+      this.playerRig.rightArm.rotation.x = -1.5;
+      this.playerRig.rightArm.rotation.z = -1.35 + slashProg * 2.8;
     } else if (isDashing) {
       this.playerRig.katanaSlashArc.visible = false;
       this.playerRig.rightArm.rotation.x = 0.65;
@@ -1951,20 +2019,58 @@ class GameView {
       }
     }
 
-    // Pulse Shockwave VFX
+    // 360° Katana Whirlwind Slash VFX (Normal Skill F — replaces light dome)
     if (this.pulseVfx.active) {
-      this.pulseVfx.progress += dt * 2.8;
+      this.pulseVfx.progress += dt * 3.1;
       if (this.pulseVfx.progress >= 1) {
         this.pulseVfx.active = false;
         this.pulseVfx.ring.visible = false;
-        this.pulseVfx.dome.visible = false;
+        this.pulseVfx.bladeArc1.visible = false;
+        this.pulseVfx.bladeArc2.visible = false;
       } else {
-        const radius = 0.5 + this.pulseVfx.progress * this.engine.tuning.pulse_radius;
-        const alpha = 1 - this.pulseVfx.progress;
+        const prog = this.pulseVfx.progress;
+        const radius = 0.8 + prog * this.engine.tuning.pulse_radius;
+        const alpha = 1 - prog;
         this.pulseVfx.ring.scale.set(radius, radius, 1);
-        (this.pulseVfx.ring.material as THREE.MeshBasicMaterial).opacity = alpha * 0.95;
-        this.pulseVfx.dome.scale.setScalar(radius);
-        (this.pulseVfx.dome.material as THREE.MeshBasicMaterial).opacity = alpha * 0.26;
+        (this.pulseVfx.ring.material as THREE.MeshBasicMaterial).opacity = alpha * 0.85;
+
+        const bladeR = 1.2 + prog * (this.engine.tuning.pulse_radius * 0.95);
+        this.pulseVfx.bladeArc1.scale.set(bladeR, bladeR, 1);
+        this.pulseVfx.bladeArc1.rotation.z = prog * Math.PI * 3.4;
+        (this.pulseVfx.bladeArc1.material as THREE.MeshBasicMaterial).opacity = alpha * 0.95;
+
+        this.pulseVfx.bladeArc2.scale.set(bladeR * 0.88, bladeR * 0.88, 1);
+        this.pulseVfx.bladeArc2.rotation.z = -prog * Math.PI * 4.2;
+        (this.pulseVfx.bladeArc2.material as THREE.MeshBasicMaterial).opacity = alpha * 0.85;
+      }
+    }
+
+    // Island-Wide Katana Ultimate Slash VFX (Trảm Toàn Đảo — J)
+    if (this.ultimateVfx.active) {
+      this.ultimateVfx.progress += dt * 1.35;
+      if (this.ultimateVfx.progress >= 1) {
+        this.ultimateVfx.active = false;
+        this.ultimateVfx.group.visible = false;
+      } else {
+        const prog = this.ultimateVfx.progress;
+        const easeOut = 1 - Math.pow(1 - prog, 3);
+        const alpha = 1 - prog;
+        const outerR = 1.5 + easeOut * 88;
+        this.ultimateVfx.outerWave.scale.set(outerR, outerR, 1);
+        (this.ultimateVfx.outerWave.material as THREE.MeshBasicMaterial).opacity = alpha * 0.95;
+
+        const innerR = 1.2 + easeOut * 66;
+        this.ultimateVfx.innerWave.scale.set(innerR, innerR, 1);
+        this.ultimateVfx.innerWave.rotation.z = prog * Math.PI * 4.5;
+        (this.ultimateVfx.innerWave.material as THREE.MeshBasicMaterial).opacity = alpha * 0.95;
+
+        const streakLen = 6 + easeOut * 95;
+        for (let i = 0; i < this.ultimateVfx.crossSlashes.length; i++) {
+          const st = this.ultimateVfx.crossSlashes[i];
+          st.visible = !this.reduceMotion;
+          st.scale.set(streakLen, 0.5 + (1 - prog) * 1.4, 1);
+          (st.material as THREE.MeshBasicMaterial).opacity = alpha * 0.92;
+        }
       }
     }
 

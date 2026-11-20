@@ -141,6 +141,7 @@ export class GameEngine {
       dashCooldownTicks: 0,
       dashDirection: [0, 1],
       pulseCooldownTicks: 0,
+      ultimateCharge: 0,
       charmTicks: 0,
       respawnDelayTicks: 0,
       isLaunched: false
@@ -527,6 +528,7 @@ export class GameEngine {
       dash: input?.dash !== undefined ? input.dash : (this.lastInput.dash ?? false),
       interact: input?.interact !== undefined ? input.interact : (this.lastInput.interact ?? false),
       pulse: input?.pulse !== undefined ? input.pulse : (this.lastInput.pulse ?? false),
+      ultimate: input?.ultimate !== undefined ? input.ultimate : (this.lastInput.ultimate ?? false),
       pause: nextPause
     };
 
@@ -534,6 +536,7 @@ export class GameEngine {
     const dashTriggered = !!currentInput.dash && !this.lastInput.dash;
     const interactTriggered = !!currentInput.interact && !this.lastInput.interact;
     const pulseTriggered = !!currentInput.pulse && !this.lastInput.pulse;
+    const ultimateTriggered = !!currentInput.ultimate && !this.lastInput.ultimate;
     this.lastInput = currentInput;
 
     // --- BƯỚC 2: Giảm các bộ đếm + Trừ nhiên liệu đèn (hao + bị hút) ---
@@ -881,10 +884,11 @@ export class GameEngine {
       }
     }
 
-    // --- BƯỚC 7: Tỏa Sáng (Pulse) ---
+    // --- BƯỚC 7: Trảm Xoay / Tỏa Sáng (Pulse) & Chiêu Cuối Trảm Toàn Đảo (Ultimate) ---
     if (pulseTriggered && this.player.carried >= this.tuning.pulse_cost && this.player.pulseCooldownTicks <= 0) {
       this.player.carried -= this.tuning.pulse_cost;
       this.player.pulseCooldownTicks = 180;
+      this.player.ultimateCharge = Math.min(2, this.player.ultimateCharge + 1);
 
       const pulseCenter: Vector3D = [this.player.pos[0], this.player.pos[1] + 0.8, this.player.pos[2]];
       const stunnedIds: string[] = [];
@@ -944,6 +948,60 @@ export class GameEngine {
         tick: eventTick,
         name: 'pulse',
         data: { stunned_ids: stunnedIds }
+      });
+    }
+
+    // Chiêu cuối Trảm Toàn Đảo (chỉ kích hoạt khi tích đủ 2 lần kỹ năng thường & người chơi bấm nút J)
+    if (ultimateTriggered && this.player.ultimateCharge >= 2 && this.player.respawnDelayTicks <= 0) {
+      this.player.ultimateCharge = 0;
+      const ultStunnedIds: string[] = [];
+
+      for (const s of this.shades) {
+        const dx = s.pos[0] - this.player.pos[0];
+        const dz = s.pos[2] - this.player.pos[2];
+        const wasDraining = s.state === 'drain';
+        s.state = 'stunned';
+        s.stunTicks = 210; // 3.5s island-wide stagger
+        s.pulsePushTicks = 22;
+        s.drainTicks = 0;
+        s.target_lantern_id = undefined;
+
+        const horizDist = Math.sqrt(dx * dx + dz * dz);
+        s.pulsePushDir = horizDist > 0.01 ? [dx / horizDist, dz / horizDist] : [1.0, 0];
+        ultStunnedIds.push(s.id);
+        this.score += wasDraining ? (this.tuning.score.per_stun_drain ?? 15) : this.tuning.score.per_stun;
+      }
+
+      for (const d of this.drifters) {
+        if (d.state === 'chase') {
+          d.state = 'flee';
+          d.fleeTicks = 240;
+        } else if (d.state === 'flee' && d.stolen > 0) {
+          for (let k = 0; k < d.stolen; k++) {
+            this.motes.push({
+              id: `MD_${d.id}_U_${k}`,
+              pos: [d.pos[0], d.pos[1], d.pos[2]],
+              active: true,
+              kind: 'dropped',
+              ttlTicks: 480
+            });
+          }
+          events.push({
+            type: 'event',
+            tick: eventTick,
+            name: 'drifter_drop',
+            data: { drifter_id: d.id, amount: d.stolen }
+          });
+          d.stolen = 0;
+          d.vanishTicks = 120;
+        }
+      }
+
+      events.push({
+        type: 'event',
+        tick: eventTick,
+        name: 'ultimate_slash',
+        data: { stunned_ids: ultStunnedIds }
       });
     }
 

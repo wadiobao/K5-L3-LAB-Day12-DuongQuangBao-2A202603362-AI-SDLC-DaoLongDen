@@ -225,4 +225,40 @@ describe('GameEngine Phase 1-3 Core Logic (Contract v1.2)', () => {
     const ev2 = engine.step({ tick: 1, pulse: true });
     expect(ev2.some(e => e.name === 'drifter_drop' && e.data.amount === 3)).toBe(true);
   });
+
+  it('should charge Ultimate after 2 normal skills and slash all Shades across the island on ultimate input', () => {
+    const engine = new GameEngine(42, 1);
+    engine.applyScenario({
+      player: { pos: [0, 0, 0], carried: 9, flames: 3 },
+      random_motes: false,
+      random_shades: false,
+      shades: [
+        { id: 'S_near', pos: [4, 0, 0], state: 'wander' },
+        { id: 'S_far', pos: [35, 0, 0], state: 'wander' }
+      ]
+    });
+
+    // Ultimate should NOT trigger before 2 normal skills
+    const preUlt = engine.step({ tick: 0, ultimate: true });
+    expect(preUlt.some(e => e.name === 'ultimate_slash')).toBe(false);
+    expect(engine.player.ultimateCharge).toBe(0);
+
+    // Skill 1 (charge -> 1)
+    engine.step({ tick: 1, ultimate: false, pulse: true });
+    expect(engine.player.ultimateCharge).toBe(1);
+    expect(engine.shades.find(s => s.id === 'S_far')!.state).toBe('wander');
+
+    // Wait out 180-tick pulse cooldown
+    for (let t = 2; t <= 185; t++) engine.step({ tick: t, pulse: false });
+
+    // Skill 2 (charge -> 2)
+    engine.step({ tick: 186, pulse: true });
+    expect(engine.player.ultimateCharge).toBe(2);
+
+    // Activate Island-Wide Ultimate Slash (J)
+    const ultEvents = engine.step({ tick: 187, pulse: false, ultimate: true });
+    expect(ultEvents.some(e => e.name === 'ultimate_slash')).toBe(true);
+    expect(engine.player.ultimateCharge).toBe(0);
+    expect(engine.shades.every(s => s.state === 'stunned')).toBe(true);
+  });
 });

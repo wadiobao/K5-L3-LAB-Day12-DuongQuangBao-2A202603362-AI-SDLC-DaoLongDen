@@ -64,6 +64,11 @@
     }
     .ability-badge.ready { border-color: #FFB347; color: #FFE9B0; }
     .ability-badge.cd { border-color: #5B5F6E; color: #8FA3B8; }
+    .ability-badge.ult-ready {
+      border-color: #FF4D6D; background: rgba(200, 16, 46, 0.48); color: #FFE9B0;
+      box-shadow: 0 0 18px rgba(255, 179, 71, 0.72); animation: blink 0.85s infinite;
+    }
+    body.reduce-motion .ability-badge.ult-ready { animation: none; }
     .ability-badge.charm { border-color: #C8102E; background: rgba(200, 16, 46, 0.35); color: #F2C14E; display: none; }
     .controls-hint { font-size: calc(18px * var(--ui-scale)); color: rgba(245, 241, 230, 0.88); line-height: 1.45; }
     .key-badge {
@@ -183,7 +188,7 @@
     <div class="hud-bottom">
       <div class="glass-card controls-hint" id="controls-hint">
         <div><span class="key-badge">WASD</span> Chạy · <span class="key-badge">Space</span> Nhảy · <span class="key-badge">Shift</span> Lướt</div>
-        <div><span class="key-badge">E</span> Nạp/Châm dầu · <span class="key-badge">F</span> Tỏa sáng · <span class="key-badge">Esc</span> Dừng</div>
+        <div><span class="key-badge">E</span> Nạp/Châm · <span class="key-badge">F</span> Trảm Xoay · <span class="key-badge">J</span> Chiêu Cuối · <span class="key-badge">Esc</span> Dừng</div>
       </div>
 
       <div class="mote-bar-wrap">
@@ -197,7 +202,8 @@
       <div class="abilities">
         <div class="ability-badge charm" id="charm-badge">Bùa Gió<br><span id="charm-cd">0.0s</span></div>
         <div class="ability-badge ready" id="dash-badge">Lướt<br><span id="dash-cd">Sẵn sàng</span></div>
-        <div class="ability-badge ready" id="pulse-badge">Tỏa Sáng<br><span id="pulse-cd">Sẵn sàng</span></div>
+        <div class="ability-badge ready" id="pulse-badge">Trảm Xoay (F)<br><span id="pulse-cd">Sẵn sàng</span></div>
+        <div class="ability-badge cd" id="ult-badge">Trảm Toàn Đảo (J)<br><span id="ult-cd">Tích: 0/2</span></div>
       </div>
     </div>
   </div>

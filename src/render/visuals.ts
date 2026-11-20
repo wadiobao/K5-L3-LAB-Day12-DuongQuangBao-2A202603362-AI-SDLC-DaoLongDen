@@ -908,32 +908,132 @@ export function createCharmVisual(textures: ProceduralTextures): THREE.Group {
 
 export interface PulseVfx {
   ring: THREE.Mesh;
-  dome: THREE.Mesh;
+  bladeArc1: THREE.Mesh;
+  bladeArc2: THREE.Mesh;
   active: boolean;
   progress: number;
 }
 
+/**
+ * Builds the 360° Katana Whirlwind Slash VFX (sharp spinning steel & golden crescent sword arcs
+ * around Mây instead of a light dome) for the normal skill (F).
+ */
 export function createPulseVfx(): PulseVfx {
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.84, 1.0, 48),
-    new THREE.MeshBasicMaterial({ color: COLORS.lanternLit, side: THREE.DoubleSide, transparent: true, opacity: 0.95 })
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.visible = false;
-
-  const dome = new THREE.Mesh(
-    new THREE.SphereGeometry(1.0, 24, 16),
+    new THREE.RingGeometry(0.86, 1.0, 48),
     new THREE.MeshBasicMaterial({
-      color: COLORS.moteGlow,
+      color: 0xf4f8ff,
+      side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.26,
+      opacity: 0.92,
       blending: THREE.AdditiveBlending,
       depthWrite: false
     })
   );
-  dome.visible = false;
+  ring.rotation.x = -Math.PI / 2;
+  ring.visible = false;
 
-  return { ring, dome, active: false, progress: 0 };
+  const bladeArc1 = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 1.0, 32, 1, 0, Math.PI * 1.45),
+    new THREE.MeshBasicMaterial({
+      color: COLORS.lanternCore,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  bladeArc1.rotation.x = -Math.PI / 2 + 0.14;
+  bladeArc1.visible = false;
+
+  const bladeArc2 = new THREE.Mesh(
+    new THREE.RingGeometry(0.68, 1.0, 32, 1, Math.PI, Math.PI * 1.35),
+    new THREE.MeshBasicMaterial({
+      color: 0xdceeff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.88,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  bladeArc2.rotation.x = -Math.PI / 2 - 0.14;
+  bladeArc2.visible = false;
+
+  return { ring, bladeArc1, bladeArc2, active: false, progress: 0 };
+}
+
+export interface UltimateSlashVfx {
+  group: THREE.Group;
+  outerWave: THREE.Mesh;
+  innerWave: THREE.Mesh;
+  crossSlashes: THREE.Mesh[];
+  active: boolean;
+  progress: number;
+}
+
+/**
+ * Builds the Island-Wide Katana Ultimate Slash VFX (Trảm Toàn Đảo — J): expanding crimson-gold
+ * crescent waves sweeping the entire island plus 6 dramatic aerial cross-cut blade streaks.
+ */
+export function createUltimateSlashVfx(): UltimateSlashVfx {
+  const group = new THREE.Group();
+  group.visible = false;
+
+  const outerWave = new THREE.Mesh(
+    new THREE.RingGeometry(0.76, 1.0, 64),
+    new THREE.MeshBasicMaterial({
+      color: COLORS.mayScarf,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  outerWave.rotation.x = -Math.PI / 2;
+  outerWave.position.y = 0.85;
+  group.add(outerWave);
+
+  const innerWave = new THREE.Mesh(
+    new THREE.RingGeometry(0.62, 0.92, 64, 1, 0, Math.PI * 1.7),
+    new THREE.MeshBasicMaterial({
+      color: COLORS.lanternCore,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  innerWave.rotation.x = -Math.PI / 2;
+  innerWave.position.y = 1.25;
+  group.add(innerWave);
+
+  const crossSlashes: THREE.Mesh[] = [];
+  const streakGeo = new THREE.PlaneGeometry(1.0, 0.24);
+  for (let i = 0; i < 6; i++) {
+    const streak = new THREE.Mesh(
+      streakGeo,
+      new THREE.MeshBasicMaterial({
+        color: i % 2 === 0 ? COLORS.lanternCore : 0xff4d6d,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.92,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    const a = (i / 6) * Math.PI;
+    streak.position.y = 2.2 + (i % 3) * 1.4;
+    streak.rotation.y = a;
+    streak.rotation.z = (i % 2 === 0 ? 1 : -1) * 0.22;
+    crossSlashes.push(streak);
+    group.add(streak);
+  }
+
+  return { group, outerWave, innerWave, crossSlashes, active: false, progress: 0 };
 }
 
 export interface IslandDecorResult {

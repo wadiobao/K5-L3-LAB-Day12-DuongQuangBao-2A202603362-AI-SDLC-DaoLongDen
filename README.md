@@ -43,7 +43,8 @@ Toàn bộ **9 hành động** đều hỗ trợ **đổi phím tự do**, phát
 | Nhảy | `Space` | Nhảy ($V_y = 7.0\text{ m/s}$ khi chạm đất) |
 | Lướt (Dash) | `Shift` | Lướt $14\text{ m/s}$ trong $0.2\text{ s}$ (hồi $1.5\text{ s}$; không hồi chiêu khi có Bùa Gió) |
 | Tương tác | `E` | Nạp đom đóm, thắp sáng / thắp lại (5 đom đóm) hoặc châm dầu (`+10` fuel/đom đóm) |
-| Tỏa Sáng (Pulse) | `F` | Tiêu tốn 3 đom đóm làm choáng & đẩy lùi Bóng Mực (`+15` điểm nếu đang hút dầu) |
+| Trảm Xoay (Skill / Pulse) | `F` | Tiêu tốn 3 đom đóm vung Katana chém 360° quanh Mây làm choáng & đẩy lùi Bóng Mực (`+15` nếu đang hút dầu), tích `+1` điểm Chiêu Cuối |
+| Trảm Toàn Đảo (Chiêu Cuối) | `J` | Khi tích đủ `2/2` lần Trảm Xoay, rút Katana chém sóng kiếm quét toàn bộ hòn đảo, làm choáng toàn bộ Bóng Mực (`3.5s`) và đánh đuổi Gió Lạc |
 | Tạm dừng | `Esc` | Mở/đóng bảng Tạm dừng (Pause / Resume) |
 
 **Các tùy chọn Dễ tiếp cận tích hợp:**
