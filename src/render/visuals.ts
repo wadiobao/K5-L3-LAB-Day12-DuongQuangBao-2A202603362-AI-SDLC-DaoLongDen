@@ -1040,6 +1040,143 @@ export function createUltimateSlashVfx(): UltimateSlashVfx {
   return { group, outerWave, innerWave, crossSlashes, active: false, progress: 0 };
 }
 
+export interface RasenganVfx {
+  group: THREE.Group;
+  core: THREE.Mesh;
+  shell: THREE.Mesh;
+  rings: THREE.Mesh[];
+  shockwave: THREE.Mesh;
+  active: boolean;
+  progress: number;
+  startPos: THREE.Vector3;
+}
+
+/**
+ * Builds an animated electric-cyan Rasengan sphere with 3 high-speed spinning chakra wind rings
+ * and an island-wide expanding detonation shockwave for the "naruto" cheat code.
+ */
+export function createRasenganVfx(): RasenganVfx {
+  const group = new THREE.Group();
+  group.visible = false;
+
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(0.65, 20, 16),
+    new THREE.MeshBasicMaterial({ color: 0xe6fbff })
+  );
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(1.0, 24, 18),
+    new THREE.MeshBasicMaterial({
+      color: 0x00c8ff,
+      transparent: true,
+      opacity: 0.72,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  group.add(core, shell);
+
+  const rings: THREE.Mesh[] = [];
+  for (let i = 0; i < 3; i++) {
+    const r = new THREE.Mesh(
+      new THREE.TorusGeometry(1.08 + i * 0.14, 0.06, 8, 32),
+      new THREE.MeshBasicMaterial({
+        color: i % 2 === 0 ? 0x6ce8ff : 0xffffff,
+        transparent: true,
+        opacity: 0.88,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    r.rotation.set(i * 1.1, i * 0.8, 0);
+    rings.push(r);
+    group.add(r);
+  }
+
+  const shockwave = new THREE.Mesh(
+    new THREE.RingGeometry(0.7, 1.0, 64),
+    new THREE.MeshBasicMaterial({
+      color: 0x38d9ff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  shockwave.rotation.x = -Math.PI / 2;
+  shockwave.visible = false;
+  group.add(shockwave);
+
+  return { group, core, shell, rings, shockwave, active: false, progress: 0, startPos: new THREE.Vector3() };
+}
+
+export interface IslandPortalVfx {
+  group: THREE.Group;
+  disc: THREE.Mesh;
+  outerRing: THREE.Mesh;
+  innerRing: THREE.Mesh;
+  beam: THREE.Mesh;
+  active: boolean;
+  targetPos: [number, number, number];
+  nextNight: number;
+}
+
+/**
+ * Builds a glowing vertical Island Portal Gate + sky beacon activated at the Tam Quan bridgehead
+ * when an island is completed (via ok1/ok2/ok3), allowing Mây to step through to the next island.
+ */
+export function createIslandPortalVfx(): IslandPortalVfx {
+  const group = new THREE.Group();
+  group.visible = false;
+
+  const disc = new THREE.Mesh(
+    new THREE.CircleGeometry(1.9, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0x4de8ff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.58,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  disc.position.y = 2.3;
+
+  const outerRing = new THREE.Mesh(
+    new THREE.TorusGeometry(2.1, 0.14, 10, 32),
+    new THREE.MeshBasicMaterial({ color: COLORS.gold })
+  );
+  outerRing.position.y = 2.3;
+
+  const innerRing = new THREE.Mesh(
+    new THREE.TorusGeometry(1.65, 0.08, 8, 28),
+    new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  innerRing.position.y = 2.3;
+
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.45, 1.85, 38, 16, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: COLORS.lanternLit,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.24,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  beam.position.y = 19;
+
+  group.add(disc, outerRing, innerRing, beam);
+  return { group, disc, outerRing, innerRing, beam, active: false, targetPos: [0, 0, 0], nextNight: 2 };
+}
+
 export interface IslandDecorResult {
   boatGroup: THREE.Group | null;
   floatingRocks: THREE.Mesh[];

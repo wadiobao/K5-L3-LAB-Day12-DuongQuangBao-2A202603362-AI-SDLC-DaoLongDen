@@ -146,6 +146,20 @@
       background: rgba(14, 20, 48, 0.82); border: 1px solid #F2C14E;
       padding: 8px 14px; border-radius: 8px; font-size: 18px; color: #FFE9B0;
     }
+    #cheat-bar {
+      position: absolute; bottom: 138px; left: 50%; transform: translateX(-50%);
+      z-index: 220; display: none; align-items: center; gap: 10px;
+      background: rgba(14, 20, 48, 0.92); backdrop-filter: blur(12px);
+      border: 2px solid #00C8FF; border-radius: 12px; padding: 10px 16px;
+      box-shadow: 0 0 24px rgba(0, 200, 255, 0.35); pointer-events: auto;
+    }
+    #cheat-bar.open { display: flex; }
+    #cheat-bar span { color: #6CE8FF; font-weight: 700; font-size: calc(18px * var(--ui-scale)); }
+    #cheat-input {
+      background: rgba(27, 35, 80, 0.95); border: 1px solid #F2C14E; border-radius: 8px;
+      color: #FFE9B0; padding: 6px 12px; width: 240px; outline: none;
+      font-family: monospace; font-size: calc(18px * var(--ui-scale));
+    }
   </style>
 </head>
 <body>
@@ -155,6 +169,10 @@
   <div id="lantern-arrow">➤ Đèn chưa sáng gần nhất</div>
   <div id="shade-arrow">⚠ Bóng Mực xuất hiện!</div>
   <div id="caption-bar">⚠ Cảnh báo</div>
+  <div id="cheat-bar">
+    <span>⚡ CHEAT:</span>
+    <input type="text" id="cheat-input" maxlength="24" autocomplete="off" placeholder="ok1-3, naruto, tele1-3">
+  </div>
 
   <div id="hud">
     <div class="hud-top">

@@ -40,6 +40,8 @@ import {
   DrifterVisual,
   PulseVfx,
   UltimateSlashVfx,
+  RasenganVfx,
+  IslandPortalVfx,
   createPlayerRig,
   createLanternVisual,
   createShadeVisual,
@@ -47,6 +49,8 @@ import {
   createCharmVisual,
   createPulseVfx,
   createUltimateSlashVfx,
+  createRasenganVfx,
+  createIslandPortalVfx,
   addIslandDecorations,
   addConnectedArchipelago
 } from './render/visuals.js';
@@ -194,6 +198,11 @@ class GameView {
   private charmPool: THREE.Group[] = [];
   private pulseVfx!: PulseVfx;
   private ultimateVfx!: UltimateSlashVfx;
+  private rasenganVfx!: RasenganVfx;
+  private portalVfx!: IslandPortalVfx;
+  private cheatBarUI!: HTMLElement;
+  private cheatInputUI!: HTMLInputElement;
+  private cheatOpen: boolean = false;
 
   // Input State
   private keyState: Record<string, boolean> = {};
@@ -406,6 +415,8 @@ class GameView {
     this.shadeArrowUI = document.getElementById('shade-arrow')!;
     this.captionBarUI = document.getElementById('caption-bar')!;
     this.benchBannerUI = document.getElementById('bench-banner')!;
+    this.cheatBarUI = document.getElementById('cheat-bar')!;
+    this.cheatInputUI = document.getElementById('cheat-input') as HTMLInputElement;
 
     this.menuOverlay = document.getElementById('menu-overlay')!;
     this.introOverlay = document.getElementById('intro-overlay')!;
@@ -660,7 +671,7 @@ class GameView {
     this.introOverlay.classList.add('active');
   }
 
-  private startNight(night: number): void {
+  private startNight(night: number, customFlyover?: [number, number, number]): void {
     this.currentNight = night;
     this.currentSeed = Date.now() & 0xfffffff;
     this.lastCountdownSec = -1;
@@ -671,8 +682,11 @@ class GameView {
     this.drifterPrevPos.clear();
     this.scoreSavedThisEnd = false;
     this.playerYaw = 0;
+    this.portalVfx.active = false;
+    this.portalVfx.group.visible = false;
     this.engine = new GameEngine(this.currentSeed, night, DEFAULT_TUNING_V12);
     this.buildNightGeometry(night, false);
+    if (customFlyover) this.flyoverStartPos = customFlyover;
 
     this.nightLabelUI.innerText = NIGHT_INTROS[night]?.title ?? `Đêm ${night}`;
     this.updateArchipelagoChainUI(night);
@@ -683,15 +697,124 @@ class GameView {
     this.hudEl.style.display = 'flex';
     this.isInGame = true;
 
-    // Smooth camera flyover across the incoming Lantern Sky-Bridge when arriving at Night 2 / 3
+    // Smooth camera flyover across the incoming Lantern Sky-Bridge when arriving at Night 2 / 3 or Teleporting
     if (this.flyoverStartPos && !this.reduceMotion) {
       this.flyoverTimer = this.flyoverDuration;
       this.camera.position.set(this.flyoverStartPos[0], this.flyoverStartPos[1], this.flyoverStartPos[2]);
-      const destName = night === 2 ? 'Đảo Cau' : 'Đảo Chuông';
-      this.showCaption(`✨ Vượt Cầu Đèn Lồng tiến vào Đêm ${night}: ${destName}`, 2.6);
+      const destName = night === 1 ? 'Đảo Bến' : night === 2 ? 'Đảo Cau' : 'Đảo Chuông';
+      this.showCaption(`✨ Bay tới Đêm ${night}: ${destName}`, 2.6);
     } else {
       this.flyoverTimer = 0;
     }
+  }
+
+  private openCheatBar(): void {
+    if (this.isBenchMode || this.cheatOpen) return;
+    this.cheatOpen = true;
+    this.keyState = {};
+    this.pendingJump = false;
+    this.pendingDash = false;
+    this.pendingInteract = false;
+    this.pendingPulse = false;
+    this.pendingUltimate = false;
+    this.cheatBarUI.classList.add('open');
+    this.cheatInputUI.value = '';
+    setTimeout(() => this.cheatInputUI.focus(), 0);
+  }
+
+  private closeCheatBar(): void {
+    this.cheatOpen = false;
+    this.cheatBarUI.classList.remove('open');
+    this.cheatInputUI.blur();
+  }
+
+  /**
+   * Executes interactive sandbox cheat commands triggered via Enter:
+   * ok1/ok2/ok3 (complete island & open ascending portal), naruto (island-wide Rasengan wipe),
+   * tele1/tele2/tele3 (fly directly to island 1/2/3). Strictly UI-layer; disabled in benchmark/headless.
+   */
+  private executeCheatCode(raw: string): void {
+    const code = raw.trim().toLowerCase();
+    if (!code) return;
+
+    if (code === 'tele1' || code === 'tele2' || code === 'tele3') {
+      const targetNight = parseInt(code.slice(4), 10);
+      soundFx.playPortal();
+      const flyStart: [number, number, number] =
+        targetNight === 1 ? [16, 26, -54] : targetNight === 2 ? [-14, 16, -72] : [-14, 18, -88];
+      this.startNight(targetNight, flyStart);
+      const names = ['', 'Đảo Bến (1)', 'Đảo Cau (2)', 'Đảo Chuông (3)'];
+      this.showCaption(`✈ [CHEAT ${code}] Bay thẳng tới ${names[targetNight]}!`, 3.0);
+      return;
+    }
+
+    if (code === 'ok1' || code === 'ok2' || code === 'ok3') {
+      const targetNight = parseInt(code.slice(2), 10);
+      if (!this.isInGame || this.currentNight !== targetNight || this.engine.state !== 'playing') {
+        this.startNight(targetNight);
+      }
+      // Light all lanterns on this island to 100% fuel
+      for (const l of this.engine.lanterns) {
+        l.lit = true;
+        l.ever_lit = true;
+        l.deposited = this.engine.tuning.lantern_cost;
+        l.fuelSixtieths = this.engine.tuning.fuel_max * 60;
+      }
+      this.engine.player.successful_lights = Math.max(this.engine.player.successful_lights, this.engine.lanterns.length);
+      this.engine.player.capacity = 20;
+      this.nightsWonCount = Math.max(this.nightsWonCount, targetNight);
+
+      // Open glowing Portal Gate at the island's Tam Quan bridgehead
+      const portalPos: [number, number, number] =
+        targetNight === 1 ? [2, 0, 38.0] : targetNight === 2 ? [14, 0, 23.2] : [-2, 0, -42.0];
+      this.portalVfx.targetPos = portalPos;
+      this.portalVfx.nextNight = targetNight + 1;
+      this.portalVfx.active = true;
+      this.portalVfx.group.position.set(portalPos[0], portalPos[1], portalPos[2]);
+      this.portalVfx.group.visible = true;
+
+      soundFx.playPortal();
+      soundFx.playLanternLit();
+      if (!this.reduceMotion) {
+        this.particleSystem.emit(portalPos[0], portalPos[1] + 2.5, portalPos[2], 42, 0.3, 0.9, 1.0, 8.5, 4.5, 0.9);
+      }
+      const nextLabel = targetNight < 3 ? `Cổng lên Đảo ${targetNight + 1} đã mở tại Cổng Tam Quan!` : 'Cổng Bình Minh đã mở tại Cổng Tam Quan!';
+      this.showCaption(`✨ [CHEAT ${code}] Hoàn thành Đảo ${targetNight}! ${nextLabel}`, 4.0);
+      return;
+    }
+
+    if (code === 'naruto') {
+      if (!this.isInGame || this.engine.state !== 'playing') {
+        this.startNight(this.currentNight || 1);
+      }
+      const wipedShades = this.engine.shades.length;
+      const wipedDrifters = this.engine.drifters.filter(d => d.state !== 'removed').length;
+      this.engine.score += wipedShades * 15 + wipedDrifters * 10;
+      this.engine.shades = [];
+      this.engine.drifters = [];
+      this.shadePrevPos.clear();
+      this.shadeYaws.clear();
+      this.drifterPrevPos.clear();
+
+      // Launch giant swirling electric-cyan Rasengan across the entire island!
+      const p = this.engine.player.pos;
+      this.rasenganVfx.active = true;
+      this.rasenganVfx.progress = 0;
+      this.rasenganVfx.startPos.set(p[0], p[1] + 1.4, p[2]);
+      this.rasenganVfx.group.position.copy(this.rasenganVfx.startPos);
+      this.rasenganVfx.group.visible = true;
+      this.rasenganVfx.shockwave.visible = false;
+      this.pulseAnimTimer = 0.45;
+      soundFx.playRasengan();
+      if (!this.reduceMotion) {
+        this.particleSystem.emit(p[0], p[1] + 1.4, p[2], 55, 0.15, 0.85, 1.0, 18.0, 5.2, 0.95);
+        this.particleSystem.emit(p[0], p[1] + 1.4, p[2], 40, 0.85, 0.98, 1.0, 12.0, 4.0, 0.8);
+      }
+      this.showCaption(`🌀 RASENGAN! Đã quét sạch ${wipedShades} Bóng Mực & ${wipedDrifters} Gió Lạc toàn bản đồ!`, 3.5);
+      return;
+    }
+
+    this.showCaption(`⚠ Cheat "${code}" không hợp lệ (thử: ok1, ok2, ok3, naruto, tele1, tele2, tele3)`, 2.5);
   }
 
   private updateArchipelagoChainUI(night: number): void {
@@ -877,6 +1000,12 @@ class GameView {
 
     this.ultimateVfx = createUltimateSlashVfx();
     this.scene.add(this.ultimateVfx.group);
+
+    this.rasenganVfx = createRasenganVfx();
+    this.scene.add(this.rasenganVfx.group);
+
+    this.portalVfx = createIslandPortalVfx();
+    this.scene.add(this.portalVfx.group);
 
     this.particleSystem = new ParticleBurstSystem(this.textures.glowSpriteMap, 240);
     this.scene.add(this.particleSystem.points);
@@ -1071,9 +1200,29 @@ class GameView {
   }
 
   private setupControls(): void {
+    this.cheatInputUI.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        const cmd = this.cheatInputUI.value;
+        this.closeCheatBar();
+        this.executeCheatCode(cmd);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeCheatBar();
+      }
+    });
+
     window.addEventListener('keydown', e => {
-      // Ignore shortcuts while typing player name in leaderboard input
+      // Ignore shortcuts while typing in any input (leaderboard name or cheat box)
       if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+
+      if (e.key === 'Enter' && !this.listeningAction && !this.isBenchMode) {
+        e.preventDefault();
+        this.openCheatBar();
+        return;
+      }
 
       const k = e.key.toLowerCase();
 
@@ -2083,6 +2232,86 @@ class GameView {
         this.pulseVfx.bladeArc2.scale.set(bladeR * 0.88, bladeR * 0.88, 1);
         this.pulseVfx.bladeArc2.rotation.z = -prog * Math.PI * 4.2;
         (this.pulseVfx.bladeArc2.material as THREE.MeshBasicMaterial).opacity = alpha * 0.85;
+      }
+    }
+
+    if (this.portalVfx.active && this.isInGame && this.engine.state === 'playing') {
+      const pp = this.portalVfx.targetPos;
+      const distP = Math.hypot(p.pos[0] - pp[0], p.pos[2] - pp[2]);
+      if (distP <= 4.0) {
+        const nextN = this.portalVfx.nextNight;
+        this.portalVfx.active = false;
+        this.portalVfx.group.visible = false;
+        soundFx.playPortal();
+        if (nextN <= 3) {
+          this.startNight(nextN);
+        } else {
+          // Completed Night 3 Dawn Portal -> trigger Dawn Victory!
+          this.engine.state = 'won';
+          this.engine.score += this.engine.player.flames * 50 + this.engine.lanterns.length * 150;
+        }
+      }
+    }
+
+    // Island Portal Gate swirling animation
+    if (this.portalVfx.active) {
+      this.portalVfx.outerRing.rotation.z = time * 1.4;
+      this.portalVfx.innerRing.rotation.z = -time * 2.6;
+      const pulse = 0.94 + Math.sin(time * 4.5) * 0.08;
+      this.portalVfx.disc.scale.setScalar(pulse);
+      (this.portalVfx.beam.material as THREE.MeshBasicMaterial).opacity = 0.2 + Math.sin(time * 3.5) * 0.07;
+    }
+
+    // Naruto Island-Wide Rasengan Throw & Giant Detonation VFX
+    if (this.rasenganVfx.active) {
+      this.rasenganVfx.progress += dt * 0.85;
+      if (this.rasenganVfx.progress >= 1) {
+        this.rasenganVfx.active = false;
+        this.rasenganVfx.group.visible = false;
+      } else {
+        const pr = this.rasenganVfx.progress;
+        // Phase 1 (0..0.32): swirling Rasengan launches upward-forward from Mây; Phase 2 (0.32..1): expands island-wide!
+        if (pr < 0.32) {
+          const t = pr / 0.32;
+          const ease = 1 - Math.pow(1 - t, 2);
+          const fwdX = Math.sin(this.playerYaw);
+          const fwdZ = Math.cos(this.playerYaw);
+          this.rasenganVfx.group.position.set(
+            this.rasenganVfx.startPos.x + fwdX * ease * 10,
+            this.rasenganVfx.startPos.y + ease * 5.5,
+            this.rasenganVfx.startPos.z + fwdZ * ease * 10
+          );
+          const sc = 0.65 + t * 2.2;
+          this.rasenganVfx.core.scale.setScalar(sc);
+          this.rasenganVfx.shell.scale.setScalar(sc * 1.2);
+          (this.rasenganVfx.shell.material as THREE.MeshBasicMaterial).opacity = 0.78;
+          this.rasenganVfx.shockwave.visible = false;
+          this.rasenganVfx.rings.forEach((r, ri) => {
+            r.scale.setScalar(sc * 1.15);
+            r.rotation.x += dt * (18 + ri * 5);
+            r.rotation.y += dt * (22 - ri * 4);
+            (r.material as THREE.MeshBasicMaterial).opacity = 0.88;
+          });
+        } else {
+          const bt = (pr - 0.32) / 0.68;
+          const easeOut = 1 - Math.pow(1 - bt, 3);
+          const alpha = 1 - bt;
+          const sphereSc = 2.8 + easeOut * 42;
+          this.rasenganVfx.core.scale.setScalar(Math.max(0.1, (1 - bt) * 8));
+          this.rasenganVfx.shell.scale.setScalar(sphereSc);
+          (this.rasenganVfx.shell.material as THREE.MeshBasicMaterial).opacity = alpha * 0.52;
+          this.rasenganVfx.shockwave.visible = true;
+          this.rasenganVfx.shockwave.position.y = -this.rasenganVfx.group.position.y + 0.6;
+          const waveR = 3 + easeOut * 86;
+          this.rasenganVfx.shockwave.scale.set(waveR, waveR, 1);
+          (this.rasenganVfx.shockwave.material as THREE.MeshBasicMaterial).opacity = alpha * 0.92;
+          this.rasenganVfx.rings.forEach((r, ri) => {
+            r.scale.setScalar(sphereSc * 1.05);
+            r.rotation.x += dt * (12 + ri * 4);
+            r.rotation.z += dt * 16;
+            (r.material as THREE.MeshBasicMaterial).opacity = alpha * 0.85;
+          });
+        }
       }
     }
 

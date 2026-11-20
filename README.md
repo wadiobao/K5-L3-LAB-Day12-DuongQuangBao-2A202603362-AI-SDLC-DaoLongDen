@@ -45,6 +45,7 @@ Toàn bộ **9 hành động** đều hỗ trợ **đổi phím tự do**, phát
 | Tương tác | `E` | Nạp đom đóm, thắp sáng / thắp lại (5 đom đóm) hoặc châm dầu (`+10` fuel/đom đóm) |
 | Trảm Xoay (Skill / Pulse) | `F` | Tiêu tốn 3 đom đóm vung Katana chém 360° quanh Mây làm choáng & đẩy lùi Bóng Mực (`+15` nếu đang hút dầu), tích `+1` điểm Chiêu Cuối |
 | Trảm Toàn Đảo (Chiêu Cuối) | `J` | Khi tích đủ `2/2` lần Trảm Xoay, rút Katana chém sóng kiếm quét toàn bộ hòn đảo, làm choáng toàn bộ Bóng Mực (`3.5s`) và đánh đuổi Gió Lạc |
+| Cheat Console (Tùy chọn) | `Enter` | Mở khung nhập mã nhanh: `ok1` / `ok2` / `ok3` (hoàn thành đảo & mở cổng), `naruto` (ném Rasengan toàn bản đồ xóa quái), `tele1` / `tele2` / `tele3` (bay tới đảo 1–3) |
 | Tạm dừng | `Esc` | Mở/đóng bảng Tạm dừng (Pause / Resume) |
 
 **Các tùy chọn Dễ tiếp cận tích hợp:**

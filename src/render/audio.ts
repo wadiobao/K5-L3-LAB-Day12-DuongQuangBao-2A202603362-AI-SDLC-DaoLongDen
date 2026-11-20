@@ -91,6 +91,26 @@ class ProceduralAudio {
     this.tone('triangle', 165, 52, 0.95, 0.32);
   }
 
+  /**
+   * Plays a swirling chakra wind buildup followed by a massive Rasengan detonation shockwave.
+   */
+  playRasengan(): void {
+    this.tone('sine', 320, 1480, 0.45, 0.24);
+    this.tone('sawtooth', 520, 880, 0.4, 0.16);
+    setTimeout(() => {
+      this.tone('sawtooth', 260, 36, 0.95, 0.38);
+      this.tone('triangle', 140, 28, 1.1, 0.35);
+    }, 360);
+  }
+
+  /**
+   * Plays a mystical portal open / island teleport chime.
+   */
+  playPortal(): void {
+    this.tone('sine', 440, 880, 0.35, 0.22);
+    this.tone('triangle', 660, 1320, 0.55, 0.24);
+  }
+
   playHurt(): void {
     this.tone('sine', 100, 35, 0.28, 0.35);
   }
