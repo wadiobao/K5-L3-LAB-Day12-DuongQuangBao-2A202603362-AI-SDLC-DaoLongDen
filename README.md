@@ -101,14 +101,17 @@ pnpm verify
 
 *(Tất cả phần sáng tạo chỉ hoạt động ở chế độ chơi thường và **tự động tắt trong cảnh benchmark/soak**, không thay đổi bất kỳ luật hay số liệu nào của Test Contract.)*
 
-1. **Đồ họa PBR & GLSL Shader thủ tục hoàn toàn không cần tải asset ngoài (`src/render/textures.ts`, `src/render/shaders.ts`):**
+1. **Quần đảo 3 Đêm liên thông trực quan bằng Cầu Đèn Lồng (`addConnectedArchipelago` trong `src/render/visuals.ts`):**
+   - Cả 3 hòn đảo (**Đảo Bến ↔ Đảo Cau ↔ Đảo Chuông**) cùng hiện diện trên bầu trời, nối với nhau qua cổng Tam Quan và các nhịp cầu treo đèn lồng phát sáng vượt biển mây.
+   - Đảo đã chinh phục rực sáng ánh đèn vàng phía sau, đảo sắp tới ẩn hiện trong sương xanh phía chân trời; khi sang Đêm 2/3, camera lướt dọc theo cầu đèn lồng vào hòn đảo mới (tự tắt khi bật Giảm chuyển động hoặc chế độ Benchmark).
+2. **Đồ họa PBR & GLSL Shader thủ tục hoàn toàn không cần tải asset ngoài (`src/render/textures.ts`, `src/render/shaders.ts`):**
    - Vòm trời GLSL chuyển sắc mượt từ đêm xanh thẳm sang ánh bình minh hồng vàng theo tỷ lệ đèn đang sáng.
    - Biển mây thể tích cuộn sóng bên dưới các hòn đảo nổi kèm đá lơ lửng và cầu tàu/thuyền nan ở Đảo Bến.
    - Texture PBR vẽ động (cỏ + bump, cát, gỗ tre + bump, nan nón lá, giấy dó đèn lồng sáng/rách).
-2. **Nhân vật & Thực thể có khớp động chi tiết (`src/render/visuals.ts`):**
+3. **Nhân vật & Thực thể có khớp động chi tiết (`src/render/visuals.ts`):**
    - Mây có khớp tay/chân, khăn quàng 3 đốt bay theo tốc độ, bím tóc đung đưa, đèn lồng nón lá phát sáng động theo số đom đóm mang theo, hiệu ứng squash/stretch khi nhảy/tiếp đất và vệt gió khi lướt.
    - Đèn lồng mái chùa 4 tua rua bay trong gió; Bóng Mực phóng tia hút năng lượng (`drainBeam`) khi hút dầu; hệ thống hạt 240 phần tử zero-allocation và hậu kỳ `UnrealBloomPass`.
-3. **Âm thanh Procedural Web Audio (`src/render/audio.ts`):**
+4. **Âm thanh Procedural Web Audio (`src/render/audio.ts`):**
    - Tổng hợp toàn bộ hiệu ứng âm thanh (nhảy, lướt gió, nhặt đom đóm, chuông chùa thắp đèn, sóng âm Tỏa Sáng, đếm ngược) bằng Web Audio API nội tại.
 
 ---

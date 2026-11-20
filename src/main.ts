@@ -45,7 +45,8 @@ import {
   createDrifterVisual,
   createCharmVisual,
   createPulseVfx,
-  addIslandDecorations
+  addIslandDecorations,
+  addConnectedArchipelago
 } from './render/visuals.js';
 
 // Pre-allocated scratch objects (zero-allocation render loop per three-best-practices)
@@ -173,6 +174,10 @@ class GameView {
   private boatGroup: THREE.Group | null = null;
   private floatingRocks: THREE.Mesh[] = [];
   private swayFoliageGroups: THREE.Group[] = [];
+  private bridgeLanternMats: THREE.MeshStandardMaterial[] = [];
+  private flyoverStartPos: [number, number, number] | null = null;
+  private flyoverTimer: number = 0;
+  private flyoverDuration: number = 2.2;
   private shadePool: ShadeVisual[] = [];
   private drifterPool: DrifterVisual[] = [];
   private charmPool: THREE.Group[] = [];
@@ -239,11 +244,11 @@ class GameView {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(COLORS.sky);
-    this.scene.fog = new THREE.FogExp2(COLORS.fog, 0.0095);
+    this.scene.fog = new THREE.FogExp2(COLORS.fog, this.isBenchMode ? 0.0095 : 0.0056);
     this.scene.add(this.levelGroup);
 
-    this.camera = new THREE.PerspectiveCamera(52, initW / initH, 0.1, 320);
-    this.camera.position.set(0, 12, -16);
+    this.camera = new THREE.PerspectiveCamera(52, initW / initH, 0.1, this.isBenchMode ? 320 : 440);
+    this.camera.position.set(0, 14, -22);
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -650,12 +655,35 @@ class GameView {
     this.buildNightGeometry(night, false);
 
     this.nightLabelUI.innerText = NIGHT_INTROS[night]?.title ?? `Đêm ${night}`;
+    this.updateArchipelagoChainUI(night);
     this.introOverlay.classList.remove('active');
     this.pauseOverlay.classList.remove('active');
     this.modalOverlay.classList.remove('active');
     this.menuOverlay.classList.remove('active');
     this.hudEl.style.display = 'flex';
     this.isInGame = true;
+
+    // Smooth camera flyover across the incoming Lantern Sky-Bridge when arriving at Night 2 / 3
+    if (this.flyoverStartPos && !this.reduceMotion) {
+      this.flyoverTimer = this.flyoverDuration;
+      this.camera.position.set(this.flyoverStartPos[0], this.flyoverStartPos[1], this.flyoverStartPos[2]);
+      const destName = night === 2 ? 'Đảo Cau' : 'Đảo Chuông';
+      this.showCaption(`✨ Vượt Cầu Đèn Lồng tiến vào Đêm ${night}: ${destName}`, 2.6);
+    } else {
+      this.flyoverTimer = 0;
+    }
+  }
+
+  private updateArchipelagoChainUI(night: number): void {
+    for (let n = 1; n <= 3; n++) {
+      const el = document.getElementById(`node-n${n}`);
+      if (!el) continue;
+      el.classList.remove('active', 'done');
+      if (n < night) el.classList.add('done');
+      else if (n === night) el.classList.add('active');
+    }
+    document.getElementById('link-12')?.classList.toggle('lit', night >= 2);
+    document.getElementById('link-23')?.classList.toggle('lit', night >= 3);
   }
 
   private togglePause(): void {
@@ -830,6 +858,7 @@ class GameView {
     this.boatGroup = null;
     this.floatingRocks = [];
     this.swayFoliageGroups = [];
+    this.bridgeLanternMats = [];
   }
 
   private buildNightGeometry(night: number, benchCleanMode: boolean): void {
@@ -985,12 +1014,18 @@ class GameView {
       this.levelGroup.add(lv.group);
     }
 
-    // Ticket-04: Disable extra creative decorations in benchmark mode so benchmark measures standard scene cleanly
+    // Ticket-04: Disable extra creative decorations & distant connected islands in benchmark mode
     if (!benchCleanMode) {
       const decor = addIslandDecorations(this.levelGroup, night, avoidList, lanternPositions, this.textures);
       this.boatGroup = decor.boatGroup;
       this.floatingRocks = decor.floatingRocks;
       this.swayFoliageGroups = decor.swayFoliageGroups;
+
+      const arch = addConnectedArchipelago(this.levelGroup, night, this.textures);
+      this.bridgeLanternMats = arch.bridgeLanternMats;
+      this.flyoverStartPos = arch.incomingBridgeStart;
+    } else {
+      this.flyoverStartPos = null;
     }
   }
 
@@ -1611,12 +1646,46 @@ class GameView {
       this.playerRig.charmAura.visible = false;
     }
 
-    // Smooth Third-Person Camera Follow (skipped in bench mode where orbit camera controls position)
+    // Smooth Third-Person Camera Follow / Menu Vista / Bridge Flyover (skipped in bench mode)
     if (!this.isBenchMode) {
-      _cameraTarget.set(p.pos[0], p.pos[1] + 1.5, p.pos[2]);
-      _scratchVec.set(p.pos[0], p.pos[1] + 9.5, p.pos[2] - 14.2);
-      this.camera.position.lerp(_scratchVec, this.reduceMotion ? 0.14 : 0.08);
-      this.camera.lookAt(_cameraTarget);
+      if (!this.isInGame) {
+        // Scenic menu vista framing Đảo Bến + glowing Lantern Sky-Bridge toward Đảo Cau & Đảo Chuông
+        const panX = this.reduceMotion ? 0 : Math.sin(time * 0.16) * 5.0;
+        _scratchVec.set(panX, 15.5, -24);
+        this.camera.position.lerp(_scratchVec, 0.05);
+        _cameraTarget.set(6, 3.0, 44);
+        this.camera.lookAt(_cameraTarget);
+      } else if (this.flyoverTimer > 0 && this.flyoverStartPos) {
+        this.flyoverTimer = Math.max(0, this.flyoverTimer - dt);
+        const rawT = 1 - this.flyoverTimer / this.flyoverDuration;
+        // Cubic ease-in-out glide along the Lantern Sky-Bridge into the arrived island
+        const easeT = rawT < 0.5 ? 4 * rawT * rawT * rawT : 1 - Math.pow(-2 * rawT + 2, 3) / 2;
+        const endX = p.pos[0];
+        const endY = p.pos[1] + 9.5;
+        const endZ = p.pos[2] - 14.2;
+        const archLift = Math.sin(easeT * Math.PI) * 5.0;
+        this.camera.position.set(
+          this.flyoverStartPos[0] + (endX - this.flyoverStartPos[0]) * easeT,
+          this.flyoverStartPos[1] + (endY - this.flyoverStartPos[1]) * easeT + archLift,
+          this.flyoverStartPos[2] + (endZ - this.flyoverStartPos[2]) * easeT
+        );
+        _cameraTarget.set(p.pos[0], p.pos[1] + 2.0, p.pos[2] + (1 - easeT) * 8);
+        this.camera.lookAt(_cameraTarget);
+      } else {
+        _cameraTarget.set(p.pos[0], p.pos[1] + 1.5, p.pos[2]);
+        _scratchVec.set(p.pos[0], p.pos[1] + 9.5, p.pos[2] - 14.2);
+        this.camera.position.lerp(_scratchVec, this.reduceMotion ? 0.14 : 0.08);
+        this.camera.lookAt(_cameraTarget);
+      }
+
+      if (!this.reduceMotion && this.bridgeLanternMats.length > 0) {
+        for (let bi = 0; bi < this.bridgeLanternMats.length; bi++) {
+          const mat = this.bridgeLanternMats[bi];
+          if (mat.emissiveIntensity > 1.0) {
+            mat.emissiveIntensity = 1.9 + Math.sin(time * 2.6 + bi * 1.1) * 0.3;
+          }
+        }
+      }
     }
 
     // Lanterns

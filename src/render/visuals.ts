@@ -1125,3 +1125,320 @@ export function addIslandDecorations(
 
   return { boatGroup, floatingRocks, swayFoliageGroups };
 }
+
+export interface ConnectedArchipelagoResult {
+  incomingBridgeStart: [number, number, number] | null;
+  bridgeLanternMats: THREE.MeshStandardMaterial[];
+}
+
+/**
+ * Renders the visual connected 3-island archipelago (Đảo Bến ↔ Đảo Cau ↔ Đảo Chuông) linked by arched
+ * lantern sky-bridges and Tam Quan gates. Purely visual (added to levelGroup and skipped in bench mode)
+ * so core physics boundaries and Test Contract v1.3 outputs remain 100% untouched.
+ */
+export function addConnectedArchipelago(
+  levelGroup: THREE.Group,
+  currentNight: number,
+  textures: ProceduralTextures
+): ConnectedArchipelagoResult {
+  const group = new THREE.Group();
+  const bridgeLanternMats: THREE.MeshStandardMaterial[] = [];
+
+  const grassCompletedMat = new THREE.MeshStandardMaterial({ color: 0x2f6052, roughness: 0.92 });
+  const grassUpcomingMat = new THREE.MeshStandardMaterial({ color: 0x1d3444, roughness: 0.95 });
+  const sandCompletedMat = new THREE.MeshStandardMaterial({ color: 0x9b8b6d, roughness: 0.94 });
+  const sandUpcomingMat = new THREE.MeshStandardMaterial({ color: 0x454e63, roughness: 0.96 });
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x1e273c, roughness: 0.96, flatShading: true });
+  const woodMat = new THREE.MeshStandardMaterial({ map: textures.woodMap, roughness: 0.85 });
+  const ropeMat = new THREE.MeshStandardMaterial({ color: 0x8b6742, roughness: 0.9 });
+  const redRoofMat = new THREE.MeshStandardMaterial({ color: 0x8c2420, roughness: 0.65 });
+  const goldMat = new THREE.MeshStandardMaterial({
+    color: COLORS.gold,
+    emissive: COLORS.lanternLit,
+    emissiveIntensity: 0.35,
+    metalness: 0.5,
+    roughness: 0.35
+  });
+
+  const makeBridgeLanternMat = (lit: boolean): THREE.MeshStandardMaterial => {
+    const mat = new THREE.MeshStandardMaterial({
+      color: lit ? COLORS.lanternCore : 0x6f84b0,
+      emissive: lit ? COLORS.lanternLit : 0x3b4e7a,
+      emissiveIntensity: lit ? 2.1 : 0.6,
+      roughness: 0.35
+    });
+    bridgeLanternMats.push(mat);
+    return mat;
+  };
+
+  // Traditional Vietnamese Tam Quan Gate at bridgeheads on the active island rim
+  const buildTamQuanGate = (x: number, y: number, z: number, yaw: number, lit: boolean) => {
+    const gate = new THREE.Group();
+    gate.position.set(x, y, z);
+    gate.rotation.y = yaw;
+
+    const pillarGeo = new THREE.CylinderGeometry(0.24, 0.3, 4.6, 8);
+    const baseGeo = new THREE.BoxGeometry(0.85, 0.55, 0.85);
+    for (const sx of [-2.1, 2.1]) {
+      const base = new THREE.Mesh(baseGeo, rockMat);
+      base.position.set(sx, 0.27, 0);
+      const pillar = new THREE.Mesh(pillarGeo, woodMat);
+      pillar.position.set(sx, 2.3, 0);
+      gate.add(base, pillar);
+    }
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.38, 0.52), woodMat);
+    beam.position.set(0, 4.4, 0);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.32, 1.35), redRoofMat);
+    roof.position.set(0, 4.82, 0);
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.22, 0.3), goldMat);
+    ridge.position.set(0, 5.06, 0);
+    gate.add(beam, roof, ridge);
+
+    const lMat = makeBridgeLanternMat(lit);
+    const lGeo = new THREE.SphereGeometry(0.32, 10, 8);
+    for (const sx of [-1.45, 1.45]) {
+      const lantern = new THREE.Mesh(lGeo, lMat);
+      lantern.scale.set(0.85, 1.25, 0.85);
+      lantern.position.set(sx, 3.65, 0);
+      gate.add(lantern);
+
+      if (lit) {
+        const halo = new THREE.Sprite(
+          new THREE.SpriteMaterial({
+            map: textures.glowSpriteMap,
+            color: COLORS.lanternLit,
+            transparent: true,
+            opacity: 0.55,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+          })
+        );
+        halo.scale.set(2.4, 2.4, 1);
+        halo.position.set(sx, 3.65, 0);
+        gate.add(halo);
+      }
+    }
+    group.add(gate);
+  };
+
+  // Arched Lantern Sky-Bridge connecting two island rims across the cloud sea
+  const buildSkyBridge = (p0: THREE.Vector3, p1: THREE.Vector3, lit: boolean) => {
+    const mid = p0.clone().lerp(p1, 0.5);
+    mid.y += 4.2;
+    const curve = new THREE.CatmullRomCurve3([p0, mid, p1]);
+    const totalLen = p0.distanceTo(p1);
+    const plankCount = Math.max(16, Math.floor(totalLen / 1.15));
+
+    const plankMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(3.4, 0.18, 0.78), woodMat, plankCount);
+    const dummy = new THREE.Object3D();
+    const tangent = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    const side = new THREE.Vector3();
+
+    const leftRopePts: THREE.Vector3[] = [];
+    const rightRopePts: THREE.Vector3[] = [];
+    const lanternPositions: THREE.Vector3[] = [];
+
+    for (let i = 0; i < plankCount; i++) {
+      const t = i / (plankCount - 1);
+      const pos = curve.getPoint(t);
+      curve.getTangent(t, tangent).normalize();
+      side.crossVectors(up, tangent).normalize();
+
+      dummy.position.copy(pos);
+      dummy.lookAt(pos.clone().add(tangent));
+      dummy.updateMatrix();
+      plankMesh.setMatrixAt(i, dummy.matrix);
+
+      if (i % 3 === 0 || i === plankCount - 1) {
+        leftRopePts.push(pos.clone().addScaledVector(side, 1.65).add(new THREE.Vector3(0, 1.55, 0)));
+        rightRopePts.push(pos.clone().addScaledVector(side, -1.65).add(new THREE.Vector3(0, 1.55, 0)));
+      }
+      if (i > 1 && i < plankCount - 2 && i % 5 === 0) {
+        lanternPositions.push(pos.clone().addScaledVector(side, 1.72).add(new THREE.Vector3(0, 2.1, 0)));
+        lanternPositions.push(pos.clone().addScaledVector(side, -1.72).add(new THREE.Vector3(0, 2.1, 0)));
+      }
+    }
+    plankMesh.instanceMatrix.needsUpdate = true;
+    group.add(plankMesh);
+
+    const ropeL = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(leftRopePts), 24, 0.06, 5, false), ropeMat);
+    const ropeR = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rightRopePts), 24, 0.06, 5, false), ropeMat);
+    group.add(ropeL, ropeR);
+
+    if (lanternPositions.length > 0) {
+      const lMat = makeBridgeLanternMat(lit);
+      const postMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.06, 0.08, 2.35, 6), woodMat, lanternPositions.length);
+      const bulbMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.28, 8, 8), lMat, lanternPositions.length);
+      lanternPositions.forEach((lp, idx) => {
+        dummy.position.set(lp.x, lp.y - 1.0, lp.z);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        postMesh.setMatrixAt(idx, dummy.matrix);
+
+        dummy.position.set(lp.x, lp.y, lp.z);
+        dummy.scale.set(0.85, 1.25, 0.85);
+        dummy.updateMatrix();
+        bulbMesh.setMatrixAt(idx, dummy.matrix);
+      });
+      postMesh.instanceMatrix.needsUpdate = true;
+      bulbMesh.instanceMatrix.needsUpdate = true;
+      group.add(postMesh, bulbMesh);
+    }
+  };
+
+  // Stylized Distant Island Silhouettes (completed islands shine warmly, upcoming islands sit in twilight mist)
+  const buildDistantIsland = (kind: 1 | 2 | 3, center: THREE.Vector3, status: 'completed' | 'upcoming') => {
+    const isl = new THREE.Group();
+    isl.position.copy(center);
+    const isLit = status === 'completed';
+    const gMat = isLit ? grassCompletedMat : grassUpcomingMat;
+    const sMat = isLit ? sandCompletedMat : sandUpcomingMat;
+    const beaconMat = makeBridgeLanternMat(isLit);
+
+    const addDisc = (ox: number, oy: number, oz: number, r: number) => {
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(r - 1.2, r, 1.0, 28), gMat);
+      top.position.set(ox, oy - 0.5, oz);
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(r, r - 5, 5.2, 24), sMat);
+      rim.position.set(ox, oy - 3.2, oz);
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(r * 0.72, r * 0.45, 12), rockMat);
+      cone.rotation.x = Math.PI;
+      cone.position.set(ox, oy - 5.5 - r * 0.22, oz);
+      isl.add(top, rim, cone);
+    };
+
+    const addMiniLanterns = (pts: Array<[number, number, number]>) => {
+      const lGeo = new THREE.SphereGeometry(0.75, 8, 8);
+      for (const [lx, ly, lz] of pts) {
+        const m = new THREE.Mesh(lGeo, beaconMat);
+        m.position.set(lx, ly + 2.8, lz);
+        isl.add(m);
+        if (isLit) {
+          const glow = new THREE.Sprite(
+            new THREE.SpriteMaterial({
+              map: textures.glowSpriteMap,
+              color: COLORS.lanternLit,
+              transparent: true,
+              opacity: 0.6,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false
+            })
+          );
+          glow.scale.set(9.5, 9.5, 1);
+          glow.position.set(lx, ly + 3.2, lz);
+          isl.add(glow);
+        }
+      }
+    };
+
+    if (kind === 1) {
+      addDisc(0, 0, 0, 36);
+      addMiniLanterns([
+        [0, 0, 22],
+        [20, 0, 6],
+        [-20, 0, 6],
+        [14, 0, -18],
+        [-14, 0, -18]
+      ]);
+    } else if (kind === 2) {
+      addDisc(0, 0, 0, 24);
+      addDisc(58, 0, 0, 24);
+      const innerBridge = new THREE.Mesh(new THREE.BoxGeometry(16, 0.5, 3.6), woodMat);
+      innerBridge.position.set(29, -0.1, 0);
+      isl.add(innerBridge);
+      // Tall stylized Areca palm silhouettes
+      const trunkGeo = new THREE.CylinderGeometry(0.18, 0.28, 7.5, 6);
+      const crownGeo = new THREE.ConeGeometry(2.1, 2.2, 6);
+      for (const [px, pz] of [
+        [-10, 8],
+        [10, -10],
+        [48, 9],
+        [68, -8]
+      ]) {
+        const tr = new THREE.Mesh(trunkGeo, woodMat);
+        tr.position.set(px, 3.7, pz);
+        const cr = new THREE.Mesh(crownGeo, gMat);
+        cr.position.set(px, 7.8, pz);
+        isl.add(tr, cr);
+      }
+      addMiniLanterns([
+        [-10, 0, 12],
+        [12, 0, 10],
+        [0, 0, -14],
+        [48, 0, 12],
+        [66, 0, 0],
+        [54, 0, -14]
+      ]);
+    } else {
+      addDisc(0, 0, 0, 40);
+      const t1 = new THREE.Mesh(new THREE.CylinderGeometry(22, 23.5, 3.2, 24), sMat);
+      t1.position.set(0, 1.5, 0);
+      const t2 = new THREE.Mesh(new THREE.CylinderGeometry(9.5, 10.5, 6.2, 20), sMat);
+      t2.position.set(0, 3.0, 0);
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.5, 8.2, 12), woodMat);
+      tower.position.set(0, 10.0, 0);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(4.8, 3.2, 8), isLit ? goldMat : redRoofMat);
+      roof.position.set(0, 15.2, 0);
+      isl.add(t1, t2, tower, roof);
+      addMiniLanterns([
+        [0, 6, 0],
+        [16, 3, 10],
+        [-16, 3, 10],
+        [28, 0, -8],
+        [-28, 0, -8]
+      ]);
+    }
+
+    // Distant warm dawn halo over completed islands
+    if (isLit) {
+      const halo = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: textures.glowSpriteMap,
+          color: COLORS.lanternLit,
+          transparent: true,
+          opacity: 0.32,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        })
+      );
+      halo.scale.set(55, 34, 1);
+      halo.position.set(kind === 2 ? 29 : 0, 12, 0);
+      isl.add(halo);
+    }
+
+    group.add(isl);
+  };
+
+  let incomingBridgeStart: [number, number, number] | null = null;
+
+  if (currentNight === 1) {
+    // Active: Đảo Bến (0,0,0) -> Bridge 1-2 -> Đảo Cau (14, 5, 102) -> Bridge 2-3 -> Đảo Chuông (-12, 12, 206)
+    buildTamQuanGate(2, 0, 39.2, 0.25, true);
+    buildSkyBridge(new THREE.Vector3(2, 0, 39.2), new THREE.Vector3(14, 5, 78), true);
+    buildDistantIsland(2, new THREE.Vector3(14, 5, 102), 'upcoming');
+    buildSkyBridge(new THREE.Vector3(20, 5, 126), new THREE.Vector3(-8, 12, 166), false);
+    buildDistantIsland(3, new THREE.Vector3(-12, 12, 206), 'upcoming');
+  } else if (currentNight === 2) {
+    // Behind: Đảo Bến (completed) -> Bridge 1-2 -> Active: Đảo Cau -> Bridge 2-3 -> Đảo Chuông (upcoming)
+    buildDistantIsland(1, new THREE.Vector3(-14, -5, -104), 'completed');
+    buildSkyBridge(new THREE.Vector3(-12, -5, -68), new THREE.Vector3(-2, 0, -27.2), true);
+    buildTamQuanGate(-2, 0, -27.2, 0.22, true);
+
+    buildTamQuanGate(14, 0, 24.4, 0.35, true);
+    buildSkyBridge(new THREE.Vector3(14, 0, 24.4), new THREE.Vector3(30, 7, 68), true);
+    buildDistantIsland(3, new THREE.Vector3(32, 7, 108), 'upcoming');
+    incomingBridgeStart = [-12, 11, -68];
+  } else {
+    // Behind: Đảo Bến (completed) -> Đảo Cau (completed) -> Bridge 2-3 -> Active: Đảo Chuông
+    buildDistantIsland(1, new THREE.Vector3(-32, -12, -214), 'completed');
+    buildSkyBridge(new THREE.Vector3(-30, -12, -178), new THREE.Vector3(-16, -7, -134), true);
+    buildDistantIsland(2, new THREE.Vector3(-14, -7, -110), 'completed');
+    buildSkyBridge(new THREE.Vector3(-12, -7, -86), new THREE.Vector3(-2, 0, -44.2), true);
+    buildTamQuanGate(-2, 0, -44.2, 0.2, true);
+    incomingBridgeStart = [-12, 11, -86];
+  }
+
+  levelGroup.add(group);
+  return { incomingBridgeStart, bridgeLanternMats };
+}

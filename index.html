@@ -33,6 +33,12 @@
     .flame-icon.lost { opacity: 0.2; filter: grayscale(1); }
     .time-badge { font-size: calc(28px * var(--ui-scale)); font-weight: 700; letter-spacing: 1px; color: #FFE9B0; text-align: center; }
     .time-badge.danger { color: #FF5A5F; animation: blink 0.7s infinite; }
+    .archipelago-chain { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 6px; font-size: calc(18px * var(--ui-scale)); color: #8FA3B8; }
+    .island-node { padding: 2px 9px; border-radius: 99px; border: 1px solid rgba(255,255,255,0.16); transition: all 0.2s; }
+    .island-node.done { color: #FFE9B0; border-color: rgba(255,179,71,0.55); background: rgba(255,179,71,0.16); }
+    .island-node.active { color: #0E1430; background: #FFB347; border-color: #FFE9B0; font-weight: 700; }
+    .island-link { color: rgba(255,179,71,0.35); font-weight: 700; }
+    .island-link.lit { color: #FFB347; text-shadow: 0 0 8px rgba(255,179,71,0.65); }
     body.colorblind .time-badge.danger { color: #FFFFFF; }
     body.reduce-motion .time-badge.danger { animation: none; }
     @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
@@ -157,8 +163,15 @@
         <div class="stats-item" id="night-label">Đêm 1 — Đảo Bến</div>
       </div>
 
-      <div class="glass-card">
+      <div class="glass-card" style="text-align:center">
         <div class="time-badge" id="time-display">04:00</div>
+        <div class="archipelago-chain" id="archipelago-chain">
+          <span class="island-node active" id="node-n1">1. Đảo Bến</span>
+          <span class="island-link" id="link-12">━━</span>
+          <span class="island-node" id="node-n2">2. Đảo Cau</span>
+          <span class="island-link" id="link-23">━━</span>
+          <span class="island-node" id="node-n3">3. Đảo Chuông</span>
+        </div>
       </div>
 
       <div class="glass-card" style="text-align:right">
