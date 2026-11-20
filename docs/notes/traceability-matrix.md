@@ -1,14 +1,12 @@
-# Requirement Traceability Matrix (RTM) - Phase 2 (Test Contract v1.1)
+# Requirement Traceability Matrix (RTM) - Phase 3 (Contract v1.2)
 
 | Requirement | Implementation File | Verification Test | Proof Output | Status |
 |---|---|---|---|---|
-| **REQ-P2-01**: Standardized Tuning (Lamp cost 10, Pulse cost 3, Safe 6m) | `src/core/engine.ts`, `game.contract.json` | `tests/unit/core.test.ts` | `docs/proof/phase-2/run_night1.jsonl` | **PASSED** |
-| **REQ-P2-02**: 3D Jump ($V_y=7$, $g=-20$) & Grounded Check | `src/core/engine.ts` | `tests/unit/core.test.ts` (Jump test) | `docs/proof/phase-2/run_night1.jsonl` | **PASSED** |
-| **REQ-P2-03**: Dash ($14\text{ m/s}$, 12 ticks duration, 90 ticks cd) | `src/core/engine.ts` | `tests/unit/core.test.ts` (Dash test) | `docs/proof/phase-2/run_night1.jsonl` | **PASSED** |
-| **REQ-P2-04**: Fall off Island ($Y < -10$) & 60-tick Respawn | `src/core/engine.ts`, `src/core/terrain.ts` | `tests/unit/core.test.ts` (Fall test) | `docs/proof/phase-2/run_night1.jsonl` | **PASSED** |
-| **REQ-P2-05**: Night 2 Island Cau (2 Islands, bridge, jump pads) | `src/core/terrain.ts`, `src/core/engine.ts` | `tests/unit/core.test.ts` (Night 2 init) | `docs/proof/phase-2/run_night2.jsonl` | **PASSED** |
-| **REQ-P2-06**: Night 3 Island Chuong (3 Tiers, ramps, wind) | `src/core/terrain.ts`, `src/core/engine.ts` | `tests/unit/core.test.ts` (Night 3 init) | `docs/proof/phase-2/run_night3.jsonl` | **PASSED** |
-| **REQ-P2-07**: Drifter Entity (Steal min(3, carried), drop on pulse) | `src/core/engine.ts` | `tests/unit/core.test.ts` (Drifter steal & drop) | `docs/proof/phase-2/run_night2.jsonl` | **PASSED** |
-| **REQ-P2-08**: Wind Charm (Speed 7.2m/s, 0s dash cd for 600 ticks) | `src/core/engine.ts` | `tests/unit/core.test.ts` (Charm test) | `docs/proof/phase-2/run_night2.jsonl` | **PASSED** |
-| **REQ-P2-09**: Strict 12-Step Tick Execution Order | `src/core/engine.ts` | `tests/unit/core.test.ts` | `docs/proof/phase-2/run_night1.jsonl` | **PASSED** |
-| **REQ-P2-10**: Determinism Check v1.1 | `src/core/prng.ts`, `src/headless/cli.ts` | `tests/determinism.test.ts` | `docs/proof/phase-2/run_night1.jsonl` | **PASSED** |
+| **REQ-P3-01**: Lantern Fuel (`0..100`, integer `1/60`, decay `1/s`, `lantern_out`) | `src/core/engine.ts`, `src/core/types.ts` | `tests/unit/core.test.ts` (Fuel decay & relight) | `docs/proof/phase-3/run_fuel_drain.jsonl` | **PASSED** |
+| **REQ-P3-02**: Refuel (`+10` fuel/mote, skip full lanterns, `refuel` event) | `src/core/engine.ts` | `tests/unit/core.test.ts` (Refuel test) | `docs/proof/phase-3/run_fuel_drain.jsonl` | **PASSED** |
+| **REQ-P3-03**: Relight (`ever_lit` costs 5 motes, `+40` pts, `relit_count`) | `src/core/engine.ts` | `tests/unit/core.test.ts` (Fuel decay & relight) | `docs/proof/phase-3/run_fuel_drain.jsonl` | **PASSED** |
+| **REQ-P3-04**: Shade `drain` state (`fuel < 30`, `5/s`, `fuel_drain` / 60t, `+15` pulse) | `src/core/engine.ts` | `tests/unit/core.test.ts` (Shade drain test) | `docs/proof/phase-3/run_fuel_drain.jsonl` | **PASSED** |
+| **REQ-P3-05**: Dawn survival win (`240/270/300s`, `>= 60%` lit, `dawn_survived`) | `src/core/engine.ts` | `tests/unit/core.test.ts` (Dawn survival test) | `docs/proof/phase-3/run_fuel_drain.jsonl` | **PASSED** |
+| **REQ-P3-06**: Growing capacity (`min(20, 10 + 2*successful_lights)`) | `src/core/engine.ts`, `src/main.ts` | `tests/unit/core.test.ts` (Fuel decay & relight) | `docs/proof/phase-3/run_night1.jsonl` | **PASSED** |
+| **REQ-P3-07**: Colorblind Mode & Non-color Lantern Cues (20% deflate + tears + 3D fuel bar) | `src/render/visuals.ts`, `src/main.ts`, `index.html` | `pnpm build` (0 errors) | `docs/notes/adr-001-lantern-fuel-and-win-rule.md` | **PASSED** |
+| **REQ-P3-08**: Phase 1–2 Regression & Determinism | `src/core/prng.ts`, `src/headless/cli.ts` | `tests/determinism.test.ts`, `tests/unit/core.test.ts` | `docs/proof/phase-3/run_night1..3.jsonl` | **PASSED** |

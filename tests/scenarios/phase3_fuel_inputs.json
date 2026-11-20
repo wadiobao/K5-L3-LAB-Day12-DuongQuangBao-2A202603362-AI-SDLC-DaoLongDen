@@ -1,0 +1,12 @@
+{
+  "frames": [
+    {
+      "tick": 65,
+      "interact": true
+    },
+    {
+      "tick": 66,
+      "interact": false
+    }
+  ]
+}

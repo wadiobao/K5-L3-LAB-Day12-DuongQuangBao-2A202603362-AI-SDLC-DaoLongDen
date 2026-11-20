@@ -12,7 +12,8 @@
 |---|---|---|---|---|
 | **Phase 1 (PRD-0)** | 8 turns | ~42,000 | ~7,500 | ~$0.025 |
 | **Phase 2 (Ticket-02)**| 5 turns | ~35,000 | ~6,500 | ~$0.021 |
-| **Tổng cộng** | 13 turns | ~77,000 | ~14,000 | ~$0.046 |
+| **Phase 3 (Ticket-03)**| 3 turns | ~28,000 | ~7,200 | ~$0.020 |
+| **Tổng cộng** | 16 turns | ~105,000 | ~21,200 | ~$0.066 |
 
 ### Biện pháp tiết kiệm Token đã áp dụng:
 1. **Module hóa địa hình (`src/core/terrain.ts`)**: Tách biệt logic hình học 3 Đêm ra khỏi engine, giúp code ngắn gọn, dễ debug và giảm context size khi kiểm thử.

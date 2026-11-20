@@ -3,7 +3,7 @@
 ## 1. Thông Tin Dự Án
 - **Tên dự án**: Đảo Đèn Lồng (Lantern Island)
 - **Tác giả**: Dương Quang Bảo (MSSV: 2A202603362)
-- **Trạng thái**: Phase 2 — TICKET-02: "Ba hòn đảo", Test Contract v1.1.
+- **Trạng thái**: Phase 3 — TICKET-03: "Đèn cạn dầu", Test Contract v1.2.
 
 ---
 
@@ -46,5 +46,5 @@
 
 ## 5. Quy Ước Bắt Buộc
 - **Mã lỗi**: File scenario/inputs sai format $\rightarrow$ thoát mã `2`. Hoàn thành bình thường $\rightarrow$ thoát mã `0`.
-- **Trạng thái Bóng Mực**: Bắt buộc dùng đúng 5 từ khóa: `spawning`, `wander`, `chase`, `recoil`, `stunned`.
+- **Trạng thái Bóng Mực**: Bắt buộc dùng đúng 6 từ khóa: `spawning`, `wander`, `chase`, `drain`, `recoil`, `stunned`.
 - **Không bao giờ commit credentials**: `.env`, API key.

@@ -30,6 +30,7 @@
     .flame-icon.lost { opacity: 0.2; filter: grayscale(1); }
     .time-badge { font-size: 28px; font-weight: 700; letter-spacing: 1px; color: #FFE9B0; text-align: center; }
     .time-badge.danger { color: #FF5A5F; animation: blink 0.7s infinite; }
+    body.colorblind .time-badge.danger { color: #FFFFFF; }
     @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
     .score-val { color: #F2C14E; font-weight: 700; font-size: 18px; }
     .stats-item { font-size: 14px; color: #F5F1E6; margin-top: 4px; }
@@ -125,8 +126,9 @@
 
       <div class="mote-bar-wrap">
         <div class="interact-prompt" id="interact-prompt">E — Nạp ánh sáng (0/10)</div>
-        <div class="glass-card">
+        <div class="glass-card" style="display:flex;align-items:center;gap:10px">
           <div class="mote-slots" id="mote-slots"></div>
+          <span id="capacity-label" style="font-size:13px;font-weight:700;color:#FFE58A">0 / 10</span>
         </div>
       </div>
 
@@ -177,6 +179,9 @@
       </label>
       <label>Độ nhạy camera: <span id="sens-val">1.0x</span>
         <input type="range" id="sens-slider" min="5" max="25" value="10">
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px">
+        <input type="checkbox" id="cb-colorblind"> Bảng màu dễ phân biệt (Mù màu)
       </label>
     </div>
     <button class="btn" id="btn-close-settings">Lưu & Đóng</button>

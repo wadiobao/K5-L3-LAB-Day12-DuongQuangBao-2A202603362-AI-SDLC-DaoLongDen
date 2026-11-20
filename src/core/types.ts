@@ -1,6 +1,6 @@
 /**
  * @file types.ts
- * @description Type definitions for the Core Simulation Engine conforming to Test Contract v1.1.
+ * @description Type definitions for the Core Simulation Engine conforming to Test Contract v1.2.
  */
 
 export type Vector3D = [number, number, number];
@@ -11,6 +11,8 @@ export interface PlayerState {
   vel: Vector3D;
   grounded: boolean;
   carried: number;
+  capacity: number;
+  successful_lights: number;
   flames: number;
   invulnTicks: number;
   dashTicks: number;
@@ -27,9 +29,13 @@ export interface LanternState {
   pos: Vector3D;
   lit: boolean;
   deposited: number;
+  /** Integer fuel in 1/60th units (0..6000) to avoid floating-point drift per Ticket-03. */
+  fuelSixtieths: number;
+  ever_lit: boolean;
+  relit_count: number;
 }
 
-export type ShadeBehaviorState = 'spawning' | 'wander' | 'chase' | 'recoil' | 'stunned';
+export type ShadeBehaviorState = 'spawning' | 'wander' | 'chase' | 'drain' | 'recoil' | 'stunned';
 
 export interface ShadeState {
   id: string;
@@ -43,7 +49,8 @@ export interface ShadeState {
   safePushDir: Vector2D;
   pulsePushTicks: number;
   pulsePushDir: Vector2D;
-  targetPos?: Vector3D;
+  target_lantern_id?: string;
+  drainTicks: number;
 }
 
 export type MoteKind = 'random' | 'dropped';
@@ -53,7 +60,7 @@ export interface MoteState {
   pos: Vector3D;
   active: boolean;
   kind: MoteKind;
-  ttlTicks: number; // TTL in ticks for dropped motes (480 ticks)
+  ttlTicks: number;
 }
 
 export type DrifterState = 'idle' | 'chase' | 'flee' | 'removed';
@@ -87,7 +94,9 @@ export type GameStatus = 'playing' | 'won' | 'lost' | 'paused';
 export interface GameScore {
   per_mote: number;
   per_lantern: number;
+  per_relight?: number;
   per_stun: number;
+  per_stun_drain?: number;
   per_second_left: number;
   per_flame_left: number;
 }
@@ -98,8 +107,16 @@ export interface TuningConfig {
   dash_duration_s: number;
   dash_cooldown_s: number;
   carry_capacity: number;
+  capacity_max: number;
   lantern_cost: number;
+  relight_cost: number;
   lantern_count_night1: number;
+  fuel_max: number;
+  fuel_decay_per_s: number;
+  fuel_per_mote: number;
+  drain_per_s: number;
+  low_fuel_threshold: number;
+  win_ratio: number;
   pickup_radius: number;
   interact_radius: number;
   pulse_cost: number;
@@ -137,6 +154,7 @@ export interface InputScenario {
     pos?: Vector3D;
     carried?: number;
     flames?: number;
+    successful_lights?: number;
     invuln_ticks?: number;
     dash_cd_ticks?: number;
     pulse_cd_ticks?: number;
@@ -152,6 +170,7 @@ export interface InputScenario {
     pos: Vector3D;
     state?: ShadeBehaviorState;
     state_ticks_left?: number;
+    target_lantern_id?: string;
   }>;
   drifters?: Array<{
     id?: string;
@@ -165,7 +184,14 @@ export interface InputScenario {
     available?: boolean;
     respawn_s?: number;
   }>;
-  lanterns?: Array<{ id: string; pos?: Vector3D; deposited?: number; lit?: boolean }>;
+  lanterns?: Array<{
+    id: string;
+    pos?: Vector3D;
+    deposited?: number;
+    lit?: boolean;
+    fuel?: number;
+    ever_lit?: boolean;
+  }>;
   time_left_s?: number;
 }
 
@@ -198,12 +224,16 @@ export interface ContractSnapshot {
     charm_s: number;
     flames: number;
     carried: number;
+    capacity: number;
   };
   lanterns: Array<{
     id: string;
     pos: Vector3D;
     lit: boolean;
     deposited: number;
+    fuel: number;
+    ever_lit: boolean;
+    relit_count: number;
   }>;
   shades: Array<{
     id: string;
