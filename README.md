@@ -108,9 +108,10 @@ pnpm verify
    - Vòm trời GLSL chuyển sắc mượt từ đêm xanh thẳm sang ánh bình minh hồng vàng theo tỷ lệ đèn đang sáng.
    - Biển mây thể tích cuộn sóng bên dưới các hòn đảo nổi kèm đá lơ lửng và cầu tàu/thuyền nan ở Đảo Bến.
    - Texture PBR vẽ động (cỏ + bump, cát, gỗ tre + bump, nan nón lá, giấy dó đèn lồng sáng/rách).
-3. **Nhân vật & Thực thể có khớp động chi tiết (`src/render/visuals.ts`):**
-   - Mây có khớp tay/chân, khăn quàng 3 đốt bay theo tốc độ, bím tóc đung đưa, đèn lồng nón lá phát sáng động theo số đom đóm mang theo, hiệu ứng squash/stretch khi nhảy/tiếp đất và vệt gió khi lướt.
-   - Đèn lồng mái chùa 4 tua rua bay trong gió; Bóng Mực phóng tia hút năng lượng (`drainBeam`) khi hút dầu; hệ thống hạt 240 phần tử zero-allocation và hậu kỳ `UnrealBloomPass`.
+3. **Nhân vật Mây mang Katana, Đền Cổ, Cây cối, Đèn Lồng, Ma & Đom đóm có cánh vỗ (`src/render/visuals.ts`, `src/main.ts`):**
+   - **Mây & Kiếm Katana**: Khớp tay/chân, cầu vai lụa viền vàng, nơ đai lưng, khăn quàng 3 đốt, bím tóc, đèn lồng nón lá phát sáng động, kèm **thanh kiếm Katana sơn mài đeo chéo sau lưng** — tự động rút kiếm ánh vàng chém vòng cung khi **Tỏa Sáng (Pulse)** hoặc **Lướt (Dash)**.
+   - **Đền Cổ & Cây cối**: Đền thờ kiến trúc đình chùa 2 tầng mái đao cong, 4 cột son, hoành phi, bàn thờ & lư hương trên mỗi đảo; cây Đa/Đào Đêm phát sáng rễ nổi, thông 4 tầng, cau 8 tàu lá uốn cong đốt vòng và lũy tre đốt nổi.
+   - **Đèn Lồng, Ma & Đom đóm**: Đèn lồng đế sen đá có khung nan gỗ, lõi lửa 3D nhấp nháy & mái chùa 2 tầng 4 tua rua; Bóng Mực đeo mặt nạ sừng, áo choàng rách, vòng ấn chú quay, 3 đốm mực quỹ đạo & tia hút dầu; Gió Lạc đeo mặt nạ linh hồn gió; Đom đóm 3D có đôi cánh trong suốt vỗ liên tục bằng `InstancedMesh`.
 4. **Âm thanh Procedural Web Audio (`src/render/audio.ts`):**
    - Tổng hợp toàn bộ hiệu ứng âm thanh (nhảy, lướt gió, nhặt đom đóm, chuông chùa thắp đèn, sóng âm Tỏa Sáng, đếm ngược) bằng Web Audio API nội tại.
 

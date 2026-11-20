@@ -56,6 +56,7 @@ const _scratchVec2 = new THREE.Vector3();
 const _scratchMatrix = new THREE.Matrix4();
 const _scratchScale = new THREE.Vector3();
 const _scratchQuat = new THREE.Quaternion();
+const _scratchEuler = new THREE.Euler();
 const _projVec = new THREE.Vector3();
 
 type ActionKey = 'up' | 'down' | 'left' | 'right' | 'jump' | 'dash' | 'interact' | 'pulse' | 'pause';
@@ -167,6 +168,8 @@ class GameView {
   private lanternVisuals: LanternVisual[] = [];
   private moteCoreInstanced!: THREE.InstancedMesh;
   private moteHaloInstanced!: THREE.InstancedMesh;
+  private moteWingLInstanced!: THREE.InstancedMesh;
+  private moteWingRInstanced!: THREE.InstancedMesh;
   private windLeavesInstanced!: THREE.InstancedMesh;
   private ambientDust!: THREE.Points;
   private jumpPadRings: THREE.Mesh[] = [];
@@ -793,19 +796,37 @@ class GameView {
 
   private buildEntityPools(): void {
     // Capacity 128 supports both standard gameplay (<=30) and Benchmark mode (100 motes)
+    const moteBodyGeo = new THREE.SphereGeometry(0.16, 10, 10);
+    moteBodyGeo.scale(0.85, 0.9, 1.35);
     this.moteCoreInstanced = new THREE.InstancedMesh(
-      new THREE.SphereGeometry(0.17, 10, 10),
+      moteBodyGeo,
       new THREE.MeshBasicMaterial({ color: COLORS.moteCore }),
       128
     );
     this.moteHaloInstanced = new THREE.InstancedMesh(
       new THREE.SphereGeometry(0.42, 10, 10),
-      new THREE.MeshBasicMaterial({ color: COLORS.moteGlow, transparent: true, opacity: 0.38 }),
+      new THREE.MeshBasicMaterial({ color: COLORS.moteGlow, transparent: true, opacity: 0.36 }),
       128
     );
+    const wingGeoL = new THREE.PlaneGeometry(0.32, 0.13);
+    wingGeoL.translate(0.16, 0, 0);
+    const wingGeoR = new THREE.PlaneGeometry(0.32, 0.13);
+    wingGeoR.translate(-0.16, 0, 0);
+    const wingMat = new THREE.MeshBasicMaterial({
+      color: 0xfff8d8,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide
+    });
+    this.moteWingLInstanced = new THREE.InstancedMesh(wingGeoL, wingMat, 128);
+    this.moteWingRInstanced = new THREE.InstancedMesh(wingGeoR, wingMat, 128);
     this.moteCoreInstanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.moteHaloInstanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.scene.add(this.moteCoreInstanced, this.moteHaloInstanced);
+    this.moteWingLInstanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.moteWingRInstanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.moteWingLInstanced.visible = !this.isBenchMode;
+    this.moteWingRInstanced.visible = !this.isBenchMode;
+    this.scene.add(this.moteCoreInstanced, this.moteHaloInstanced, this.moteWingLInstanced, this.moteWingRInstanced);
 
     this.windLeavesInstanced = new THREE.InstancedMesh(
       new THREE.PlaneGeometry(0.38, 0.17),
@@ -1638,6 +1659,28 @@ class GameView {
     this.playerRig.miniLanternMat.emissiveIntensity = 1.0 + carryRatio * 2.2;
     this.playerRig.miniHalo.scale.setScalar(0.95 + carryRatio * 1.15);
     this.playerRig.pouchMat.emissiveIntensity = 0.1 + carryRatio * 1.6;
+    this.playerRig.katanaBladeGlowMat.emissiveIntensity = 0.85 + carryRatio * 2.1;
+
+    // Katana Draw & Sweeping Slash Animation on Pulse (Tỏa Sáng) or Dash (Lướt)
+    const isSlashing = this.pulseAnimTimer > 0 || isDashing;
+    this.playerRig.katanaDrawn.visible = isSlashing;
+    this.playerRig.katanaSheathedHilt.visible = !isSlashing;
+    this.playerRig.katanaScabbard.rotation.x = 0.08 + Math.min(0.24, horizSpeed * 0.025);
+    if (this.pulseAnimTimer > 0 && !this.reduceMotion) {
+      const slashProg = 1 - this.pulseAnimTimer / 0.38;
+      this.playerRig.katanaSlashArc.visible = true;
+      this.playerRig.katanaSlashArc.rotation.z = -1.8 + slashProg * 4.4;
+      this.playerRig.katanaSlashArc.scale.setScalar(0.9 + slashProg * 1.65);
+      (this.playerRig.katanaSlashArc.material as THREE.MeshBasicMaterial).opacity = (1 - slashProg) * 0.9;
+      this.playerRig.rightArm.rotation.x = -1.45;
+      this.playerRig.rightArm.rotation.z = -1.2 + slashProg * 2.6;
+    } else if (isDashing) {
+      this.playerRig.katanaSlashArc.visible = false;
+      this.playerRig.rightArm.rotation.x = 0.65;
+      this.playerRig.rightArm.rotation.z = -0.35;
+    } else {
+      this.playerRig.katanaSlashArc.visible = false;
+    }
 
     if (p.charmTicks > 0) {
       this.playerRig.charmAura.visible = true;
@@ -1708,6 +1751,9 @@ class GameView {
           lv.coreMat.needsUpdate = true;
         }
         lv.coreMesh.scale.set(1, 1, 1);
+        lv.flameCore.visible = true;
+        lv.flameCore.scale.setScalar((0.88 + flicker * 0.35) * blink1Hz);
+        lv.flameCore.rotation.y = time * 2.2 + idx;
         lv.tearGroup.visible = false;
         lv.coreMat.emissive.setHex(COLORS.lanternLit);
         lv.coreMat.emissiveIntensity = (1.6 + flicker * 0.35) * blink1Hz;
@@ -1730,6 +1776,7 @@ class GameView {
           lv.coreMat.needsUpdate = true;
         }
         lv.coreMesh.scale.set(1, 0.8, 1);
+        lv.flameCore.visible = false;
         lv.tearGroup.visible = true;
         lv.fuelBarGroup.visible = false;
         lv.safeRing.visible = false;
@@ -1749,14 +1796,20 @@ class GameView {
       }
     });
 
-    // Dual-layer Motes InstancedMesh (up to 128, zero-allocation loop)
+    // Dual-layer Winged Fireflies InstancedMesh (up to 128, zero-allocation loop)
     let moteIdx = 0;
     for (let mi = 0; mi < this.engine.motes.length && moteIdx < 128; mi++) {
       const m = this.engine.motes[mi];
       if (!m.active) continue;
-      const floatY = m.pos[1] + 0.58 + Math.sin(time * 3 + moteIdx * 1.3) * 0.22;
-      const pulseScale = 0.85 + Math.sin(time * 5 + moteIdx) * 0.24;
-      _scratchVec.set(m.pos[0], floatY, m.pos[2]);
+      const orbitAngle = time * 1.4 + moteIdx * 1.7;
+      const fx = m.pos[0] + (this.isBenchMode ? 0 : Math.cos(orbitAngle) * 0.18);
+      const fz = m.pos[2] + (this.isBenchMode ? 0 : Math.sin(orbitAngle) * 0.18);
+      const floatY = m.pos[1] + 0.62 + Math.sin(time * 3.2 + moteIdx * 1.3) * 0.24;
+      const pulseScale = 0.85 + Math.sin(time * 5.2 + moteIdx) * 0.24;
+
+      _scratchVec.set(fx, floatY, fz);
+      _scratchEuler.set(0, orbitAngle, 0);
+      _scratchQuat.setFromEuler(_scratchEuler);
       _scratchScale.set(1, 1, 1);
       _scratchMatrix.compose(_scratchVec, _scratchQuat, _scratchScale);
       this.moteCoreInstanced.setMatrixAt(moteIdx, _scratchMatrix);
@@ -1764,15 +1817,38 @@ class GameView {
       _scratchScale.set(pulseScale, pulseScale, pulseScale);
       _scratchMatrix.compose(_scratchVec, _scratchQuat, _scratchScale);
       this.moteHaloInstanced.setMatrixAt(moteIdx, _scratchMatrix);
+
+      if (!this.isBenchMode) {
+        const flap = this.reduceMotion ? 0.25 : Math.sin(time * 28 + moteIdx * 2.1) * 0.72;
+        _scratchVec2.set(fx, floatY + 0.08, fz);
+        _scratchEuler.set(0.2, orbitAngle, flap);
+        _scratchQuat.setFromEuler(_scratchEuler);
+        _scratchScale.set(1, 1, 1);
+        _scratchMatrix.compose(_scratchVec2, _scratchQuat, _scratchScale);
+        this.moteWingLInstanced.setMatrixAt(moteIdx, _scratchMatrix);
+
+        _scratchEuler.set(0.2, orbitAngle, -flap);
+        _scratchQuat.setFromEuler(_scratchEuler);
+        _scratchMatrix.compose(_scratchVec2, _scratchQuat, _scratchScale);
+        this.moteWingRInstanced.setMatrixAt(moteIdx, _scratchMatrix);
+      }
       moteIdx++;
     }
     for (let i = moteIdx; i < 128; i++) {
       _scratchMatrix.makeTranslation(0, -999, 0);
       this.moteCoreInstanced.setMatrixAt(i, _scratchMatrix);
       this.moteHaloInstanced.setMatrixAt(i, _scratchMatrix);
+      if (!this.isBenchMode) {
+        this.moteWingLInstanced.setMatrixAt(i, _scratchMatrix);
+        this.moteWingRInstanced.setMatrixAt(i, _scratchMatrix);
+      }
     }
     this.moteCoreInstanced.instanceMatrix.needsUpdate = true;
     this.moteHaloInstanced.instanceMatrix.needsUpdate = true;
+    if (!this.isBenchMode) {
+      this.moteWingLInstanced.instanceMatrix.needsUpdate = true;
+      this.moteWingRInstanced.instanceMatrix.needsUpdate = true;
+    }
 
     // Articulated Shades + Drain Beam
     const rimHex = this.colorblindMode ? 0x00b3ff : COLORS.shadeRim;
@@ -1827,6 +1903,13 @@ class GameView {
         const whipSpeed = s.state === 'chase' || s.state === 'drain' ? 10 : 4;
         sv.tendrils.forEach((t, ti) => {
           t.rotation.z = this.reduceMotion ? 0 : Math.sin(time * whipSpeed + ti * 1.1) * 0.48;
+        });
+        (sv.runeRing.material as THREE.MeshBasicMaterial).color.setHex(rimHex);
+        sv.runeRing.rotation.z = this.reduceMotion ? 0 : time * (s.state === 'drain' ? 4.5 : 1.8) + i;
+        sv.orbitWisps.forEach((w, wi) => {
+          const wa = time * 2.8 + wi * ((Math.PI * 2) / 3) + i;
+          w.position.set(Math.cos(wa) * 1.05, 0.25 + Math.sin(wa * 1.6) * 0.28, Math.sin(wa) * 1.05);
+          w.rotation.y = wa * 2;
         });
       } else {
         sv.root.visible = false;

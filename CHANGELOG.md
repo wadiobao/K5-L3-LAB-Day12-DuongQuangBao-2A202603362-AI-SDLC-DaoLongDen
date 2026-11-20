@@ -12,7 +12,7 @@
   - Tùy chọn **Giảm chuyển động (Reduce Motion)** tắt rung camera & hiệu ứng chớp.
   - Cỡ chữ UI tối thiểu `18px` tại `1280×720` + tùy chọn **Chữ lớn (×1.25)**.
 - **Quần đảo 3 Đêm liên thông trực quan**: Hiển thị đồng thời Đảo Bến ↔ Đảo Cau ↔ Đảo Chuông nối với nhau qua cổng Tam Quan và cầu treo đèn lồng vượt biển mây (`addConnectedArchipelago`), kèm hiệu ứng camera lướt dọc cầu khi sang Đêm 2/3 và thanh tiến trình 3 đảo trên HUD (tự động tắt trong benchmark/soak, không thay đổi luật Test Contract v1.3).
-- **Nâng cấp đồ họa & hoạt ảnh 3D**: PBR CanvasTextures (`src/render/textures.ts`), GLSL Sky Dome & Volumetric Cloud Sea + Particle Burst (`src/render/shaders.ts`), nhân vật Mây nhiều khớp kèm khăn bay 3 đốt, đèn lồng mái chùa 4 tua rua, tia hút dầu Bóng Mực, UnrealBloomPass post-processing.
+- **Nâng cấp đồ họa & hoạt ảnh 3D**: PBR CanvasTextures (`src/render/textures.ts`), GLSL Sky Dome & Volumetric Cloud Sea + Particle Burst (`src/render/shaders.ts`), nhân vật Mây đeo kiếm Katana (tự rút kiếm vung vòng cung ánh sáng khi Pulse/Dash), Đền Cổ mái cong 2 tầng trên mỗi đảo, cây Đa/Đào Đêm phát sáng & cau 8 tàu lá đốt vòng, đèn lồng đế sen đá có lõi lửa 3D, Bóng Mực mặt nạ sừng + vòng ấn chú + đốm mực quỹ đạo, Gió Lạc mặt nạ linh hồn, đom đóm 3D cánh vỗ `InstancedMesh` và `UnrealBloomPass`.
 - **Tài liệu phát hành**: Hoàn thiện `README.md`, `CREDITS.md`, `LICENSE`, `docs/notes/retro.md` và bằng chứng `docs/proof/phase-4/`.
 
 ---
